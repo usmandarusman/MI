@@ -1,8 +1,15 @@
+@custom-variant dark (&:where(.dark, .dark *));
+
 @import "tailwindcss";
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
@@ -12,15 +19,93 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes spinScale {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+
+  50% {
+    transform: rotate(180deg) scale(0.5);
+  }
+
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes glow {
+
+    0%,
+    100% {
+        filter:
+            drop-shadow(0 0 5px #facc15)
+            drop-shadow(0 0 12px rgba(250, 204, 21, .4));
+    }
+
+    50% {
+        filter:
+            drop-shadow(0 0 10px #fde047)
+            drop-shadow(0 0 30px rgba(250, 204, 21, .8));
+    }
+}
+
+.animate-logo-glow {
+    animation: glow 3s ease-in-out infinite;
+}
+.animate-shimmer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.animate-shimmer::before {
+    content: "";
+    position: absolute;
+    inset: -50%;
+
+    background: linear-gradient(
+        120deg,
+        transparent 35%,
+        rgba(255,255,255,.9) 50%,
+        transparent 65%
+    );
+
+    transform: translateX(-150%) rotate(20deg);
+
+    animation: shimmer 3s linear infinite;
+}
+
+@keyframes shimmer {
+    to {
+        transform: translateX(250%) rotate(20deg);
+    }
+}
+
+
+@keyframes footerFadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes footerModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
