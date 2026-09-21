@@ -12,6 +12,97 @@
   --foreground: #ededed;
 }
 
+/* ================================
+   BROKER POPUP ANIMATIONS
+================================ */
+
+/* Backdrop masuk */
+@keyframes popupBackdropIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+
+  to {
+    opacity: 1;
+    backdrop-filter: blur(8px);
+  }
+}
+
+/* Backdrop keluar */
+@keyframes popupBackdropOut {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(8px);
+  }
+
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+/* Popup masuk: zoom + sedikit bounce */
+@keyframes popupZoomIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(14px);
+  }
+
+  60% {
+    opacity: 1;
+    transform: scale(1.015) translateY(-2px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Popup keluar */
+@keyframes popupZoomOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
+  }
+}
+
+/* Animation classes */
+.animate-popup-backdrop-in {
+  animation: popupBackdropIn 250ms ease-out both;
+}
+
+.animate-popup-backdrop-out {
+  animation: popupBackdropOut 220ms ease-in both;
+}
+
+.animate-popup-zoom-in {
+  animation: popupZoomIn 380ms
+    cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-popup-zoom-out {
+  animation: popupZoomOut 100ms
+    cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-popup-backdrop-in,
+  .animate-popup-backdrop-out,
+  .animate-popup-zoom-in,
+  .animate-popup-zoom-out {
+    animation-duration: 1ms;
+  }
+}
+
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

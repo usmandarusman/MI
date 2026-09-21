@@ -2,9 +2,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+
 import { ThemeProvider } from "next-themes";
 import Navigasi from "./components/items/navigator";
 import Footer from "./components/items/footer";
+import ServiceWorkerRegister from "./components/pwa/service-worker-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,16 +23,17 @@ export const metadata: Metadata = {
     default: "Mann's Intelligence",
     template: "%s | Mann's Intelligence",
   },
+
   description:
     "Mann's Intelligence — Smart Trading, Market Insights, and Stock Analysis.",
+
   applicationName: "Mann's Intelligence",
-  keywords: [
-    "Mann's Intelligence",
-    "Stock Market",
-    "Trading",
-    "Analisis Saham",
-    "IHSG",
-  ],
+
+  appleWebApp: {
+    capable: true,
+    title: "Mann's Intelligence",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export default function RootLayout({
@@ -44,17 +47,20 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
-      <body className="min-h-screen flex flex-col">
+      <body className="flex min-h-screen flex-col">
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
           enableSystem={false}
         >
+          {/* PWA SERVICE WORKER */}
+          <ServiceWorkerRegister />
+
           {/* NAVIGASI */}
           <Navigasi />
 
           {/* MAIN */}
-          <main className="w-full relative h-[86vh]">
+          <main className="relative h-[86vh] w-full">
             {children}
           </main>
 

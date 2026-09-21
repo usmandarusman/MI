@@ -11,7 +11,6 @@ export default function Navigasi() {
       
       {/* Logo */}
       <section className="flex items-center">
-        <Link href="/" className="shrink-0">
           <Image
             src="/images/logoname.png"
             alt="Logo Name"
@@ -20,7 +19,6 @@ export default function Navigasi() {
             className="w-full max-w-45 sm:max-w-55 md:max-w-65 h-auto object-contain drop-shadow-xl"
             priority
             />
-        </Link>
       </section>
 
       {/* Toggle */}

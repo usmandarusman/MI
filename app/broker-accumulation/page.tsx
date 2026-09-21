@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Input from "../components/fragments/ui/input";
+import { LucideEraser,  LucideX } from "lucide-react";
+import { BrokerPopup } from "../components/fragments/popup/brokerPopup";
 
 type BrokerData = {
   id: string;
@@ -183,6 +185,14 @@ export default function BrokerAccumulation() {
   const [form, setForm] = useState(initialForm);
   const [data, setData] = useState<BrokerData[]>([]);
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
+  const [popupData, setPopupData] = useState<{
+  emiten: string;
+  freeFloat: string;
+  cso: string;
+  netBuy: string;
+  broker: string;
+  accumulation: number;
+} | null>(null);
 
   // Muat data tersimpan saat komponen pertama kali dibuka.
   useEffect(() => {
@@ -191,6 +201,7 @@ export default function BrokerAccumulation() {
       if (saved) {
         const parsed: unknown = JSON.parse(saved);
         if (Array.isArray(parsed)) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setData(parsed.filter((item) =>
             item &&
             typeof item.id === "string" &&
@@ -523,37 +534,66 @@ export default function BrokerAccumulation() {
         <>
         {
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-100 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 sm:px-4">
+
+              {/* SORT BY + ASC/DESC BERDAMPINGAN */}
               <div className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">Sort by</span>
+
+                <span className="shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  Sort by
+                </span>
+
                 <select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "accumulation" | "emiten")}
+                  onChange={(e) =>
+                    setSortBy(e.target.value as "accumulation" | "emiten")
+                  }
                   className="min-w-0 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
                   aria-label="Urutkan berdasarkan"
                 >
                   <option value="accumulation">Accumulation</option>
                   <option value="emiten">Name</option>
                 </select>
+
+                {/* ASC / DESC */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSortDirection((prev) =>
+                      prev === "asc" ? "desc" : "asc"
+                    )
+                  }
+                  className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-yellow-500 hover:text-yellow-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:text-yellow-400"
+                  aria-label={
+                    sortDirection === "asc"
+                      ? "Ascending, klik untuk descending"
+                      : "Descending, klik untuk ascending"
+                  }
+                  title={
+                    sortDirection === "asc"
+                      ? "Ascending (A-Z / kecil ke besar)"
+                      : "Descending (Z-A / besar ke kecil)"
+                  }
+                >
+                  <span className="text-base leading-none">
+                    {sortDirection === "asc" ? "↑" : "↓"}
+                  </span>
+
+                  <span>
+                    {sortDirection === "asc" ? "Asc" : "Des"}
+                  </span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSortDirection((prev) => prev === "asc" ? "desc" : "asc")}
-                className="flex shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-yellow-500 hover:text-yellow-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:text-yellow-400"
-                aria-label={sortDirection === "asc" ? "Urutan ascending, klik untuk descending" : "Urutan descending, klik untuk ascending"}
-                title={sortDirection === "asc" ? "Ascending (kecil ke besar / A-Z)" : "Descending (besar ke kecil / Z-A)"}
-              >
-                <span className="text-base leading-none">{sortDirection === "asc" ? "↑" : "↓"}</span>
-                <span>{sortDirection === "asc" ? "Ascending" : "Descending"}</span>
-              </button>
+              {/* DELETE DI UJUNG KANAN */}
               <button
                 type="button"
                 onClick={handleClearAll}
-                className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
+                className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
               >
-                Hapus Semua
+                <LucideEraser size={14} />
               </button>
             </div>
+
           }
         <div className="overflow-y-scroll rounded-xl border border-zinc-200 dark:border-zinc-800">
           
@@ -603,7 +643,7 @@ export default function BrokerAccumulation() {
                     Net Buy
                   </th>
                   <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                    Aksi
+                    
                   </th>
 
                 </tr>
@@ -645,11 +685,26 @@ export default function BrokerAccumulation() {
                     </td>
 
                     {/* EMITEN */}
-
-                    <td className="px-4 py-3 text-center font-medium text-zinc-800 dark:text-zinc-200">
-                      {item.emiten}
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPopupData({
+                            emiten: item.emiten,
+                            freeFloat: item.freeFloat,
+                            cso: item.cso,
+                            netBuy: item.netBuy,
+                            broker: item.broker,
+                            accumulation: item.accumulation,
+                          })
+                        }
+                        className="cursor-pointer font-semibold
+                          transition hover:text-blue-500 hover:underline
+                         dark:hover:text-blue-300"
+                      >
+                        {item.emiten}
+                      </button>
                     </td>
-
                     {/* FREE FLOAT */}
 
                     <td className="px-4 py-3 text-center text-zinc-600 dark:text-zinc-400">
@@ -677,10 +732,10 @@ export default function BrokerAccumulation() {
                       <button
                         type="button"
                         onClick={() => handleDelete(item.id)}
-                        className="rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
+                        className="px-3 cursor-pointer py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
                         aria-label={`Hapus ${item.broker} - ${item.emiten}`}
                       >
-                        Hapus
+                        <LucideX size={14}/>
                       </button>
                     </td>
 
@@ -821,7 +876,13 @@ export default function BrokerAccumulation() {
 
         </div>
       )}
-
+    {/* POPUP BROKER */}
+    {popupData && (
+      <BrokerPopup
+        {...popupData}
+        onClose={() => setPopupData(null)}
+      />
+    )}
     </div>
   );
 }

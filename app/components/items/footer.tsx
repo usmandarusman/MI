@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 export default function Footer() {
   return (
@@ -37,7 +38,9 @@ export default function Footer() {
       />
      
         <div className="flex items-center justify-end gap-4 border-b border-black dark:border-yellow-300/50 w-full md:w-1/2 md:mx-auto px-4 text-sm">
-          <Image src={"/images/logo.png"} height={40} width={40} alt="logo.png" loading="lazy"/>
+          <Link href="/"> 
+            <Image src={"/images/logo.png"} height={40} width={40} alt="logo.png" loading="lazy"/>
+          </Link>
           <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-200">
             <span className="hover:underline hover:cursor-pointer">About</span>
             <span className="hover:underline hover:cursor-pointer">Privacy</span>
