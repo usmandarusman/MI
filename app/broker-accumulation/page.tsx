@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Input from "../components/fragments/ui/input";
 
 type BrokerData = {
+  id: string;
   broker: string;
   emiten: string;
   freeFloat: string;
@@ -11,6 +12,8 @@ type BrokerData = {
   netBuy: string;
   accumulation: number;
 };
+
+const STORAGE_KEY = "broker-accumulation-data";
 
 const initialForm = {
   broker: "",
@@ -179,6 +182,48 @@ const formatInput = (
 export default function BrokerAccumulation() {
   const [form, setForm] = useState(initialForm);
   const [data, setData] = useState<BrokerData[]>([]);
+  const [isStorageLoaded, setIsStorageLoaded] = useState(false);
+
+  // Muat data tersimpan saat komponen pertama kali dibuka.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setData(parsed.filter((item) =>
+            item &&
+            typeof item.id === "string" &&
+            typeof item.broker === "string" &&
+            typeof item.emiten === "string" &&
+            typeof item.accumulation === "number"
+          ));
+        }
+      }
+    } catch (error) {
+      console.error("Gagal memuat data broker dari localStorage:", error);
+    } finally {
+      setIsStorageLoaded(true);
+    }
+  }, []);
+
+  // Simpan setiap perubahan setelah data awal selesai dimuat.
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (error) {
+      console.error("Gagal menyimpan data broker ke localStorage:", error);
+    }
+  }, [data, isStorageLoaded]);
+
+  const handleDelete = (id: string) => {
+    setData((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleClearAll = () => {
+    setData([]);
+  };
   const [missingFields, setMissingFields] = useState<string[]>([]);
   const [showPopup, setShowPopup] = useState(false);
   const [sortBy, setSortBy] = useState<"accumulation" | "emiten">("accumulation");
@@ -330,6 +375,7 @@ export default function BrokerAccumulation() {
     setData((prev) => [
       ...prev,
       {
+        id: crypto.randomUUID(),
         broker: form.broker.toUpperCase(),
 
         emiten: form.emiten.toUpperCase(),
@@ -500,6 +546,13 @@ export default function BrokerAccumulation() {
                 <span className="text-base leading-none">{sortDirection === "asc" ? "↑" : "↓"}</span>
                 <span>{sortDirection === "asc" ? "Ascending" : "Descending"}</span>
               </button>
+              <button
+                type="button"
+                onClick={handleClearAll}
+                className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
+              >
+                Hapus Semua
+              </button>
             </div>
           }
         <div className="overflow-y-scroll rounded-xl border border-zinc-200 dark:border-zinc-800">
@@ -549,6 +602,9 @@ export default function BrokerAccumulation() {
                   <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
                     Net Buy
                   </th>
+                  <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
+                    Aksi
+                  </th>
 
                 </tr>
               </thead>
@@ -559,7 +615,7 @@ export default function BrokerAccumulation() {
 
                 {sortedData.map((item, index) => (
                   <tr
-                    key={`${item.broker}-${item.emiten}-${index}`}
+                    key={item.id}
                     className="
                       border-b
                       border-zinc-100
@@ -616,6 +672,16 @@ export default function BrokerAccumulation() {
                       }`}
                     >
                       {item.netBuy}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(item.id)}
+                        className="rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
+                        aria-label={`Hapus ${item.broker} - ${item.emiten}`}
+                      >
+                        Hapus
+                      </button>
                     </td>
 
                   </tr>
