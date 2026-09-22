@@ -1,0 +1,9 @@
+
+{
+  "crons": [
+    {
+      "path": "/api/admin/sync-securities",
+      "schedule": "0 0 1 * *"
+    }
+  ]
+}

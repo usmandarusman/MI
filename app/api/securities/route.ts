@@ -1,100 +1,46 @@
+import { NextResponse } from "next/server";
+import { db } from "@/lib/firebase-admin";
 
-import { NextRequest, NextResponse } from "next/server";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type Security = {
-  Code: string;
-  Name: string;
-  Shares: number;
-  ListingDate: string;
-  ListingBoard: string;
-};
-
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const code = request.nextUrl.searchParams
-      .get("code")
-      ?.trim()
-      .toUpperCase();
+    const snapshot = await db
+      .collection("securities")
+      .select("Code", "Name")
+      .get();
 
-    if (!code) {
-      return NextResponse.json(
-        { error: "Parameter code wajib diisi" },
-        { status: 400 }
-      );
-    }
+    const securities = snapshot.docs.map((doc) => {
+      const data = doc.data();
 
-    const apiKey = process.env.ZAPI_API_KEY_IDX;
-
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "ZAPI_API_KEY belum diatur" },
-        { status: 500 }
-      );
-    }
-
-    const params = new URLSearchParams({
-      length: "1000",
-      start: "0",
-      code,
+      return {
+        code: String(data.Code ?? doc.id).toUpperCase(),
+        name: String(data.Name ?? ""),
+      };
     });
 
-    const response = await fetch(
-      `https://api.zpi.web.id/v1/finance:idx/securities?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          "x-api-key": apiKey,
-        },
-        next: { revalidate: 86400 },
-      }
+    // Urutkan berdasarkan kode emiten
+    securities.sort((a, b) =>
+      a.code.localeCompare(b.code)
     );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-
-      console.error("ZAPI error:", response.status, errorText);
-
-      return NextResponse.json(
-        { error: "Gagal mengambil data dari ZAPI" },
-        { status: response.status }
-      );
-    }
-
-    const result = await response.json();
-
-    // Pastikan data dari IDX berbentuk array
-    const securities: Security[] = Array.isArray(result.data)
-      ? result.data
-      : [];
-
-    // Cari emiten sesuai kode
-    const company = securities.find(
-      (item) => item.Code?.toUpperCase() === code
-    );
-
-    if (!company) {
-      return NextResponse.json(
-        {
-          error: `Emiten ${code} tidak ditemukan`,
-          provider: result.provider,
-        },
-        { status: 404 }
-      );
-    }
 
     return NextResponse.json({
-      provider: result.provider,
-      code: company.Code,
-      name: company.Name,
-      shares: company.Shares,
-      listingDate: company.ListingDate,
-      listingBoard: company.ListingBoard,
+      success: true,
+      total: securities.length,
+      data: securities,
     });
   } catch (error) {
-    console.error("Securities API error:", error);
+    console.error("GET SECURITIES ERROR:", error);
 
     return NextResponse.json(
-      { error: "Terjadi kesalahan saat mengambil data emiten" },
+      {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Gagal mengambil data securities",
+      },
       { status: 500 }
     );
   }

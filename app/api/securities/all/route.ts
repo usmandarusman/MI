@@ -1,6 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function GET() {
   try {
@@ -15,11 +17,12 @@ export async function GET() {
 
     const pageSize = 100;
     let start = 0;
-    let recordsTotal = 0;
+    let recordsTotal = Infinity;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allSecurities: any[] = [];
 
-    while (true) {
+    while (start < recordsTotal) {
       const params = new URLSearchParams({
         length: String(pageSize),
         start: String(start),
@@ -28,37 +31,25 @@ export async function GET() {
       const url =
         `https://api.zpi.web.id/v1/finance:idx/securities?${params}`;
 
-      console.log("Fetching ZAPI:", url);
-
       const response = await fetch(url, {
-        headers: {
-          "x-api-key": apiKey,
-        },
+        headers: { "x-api-key": apiKey },
         cache: "no-store",
       });
 
-      const text = await response.text();
-
       if (!response.ok) {
-        console.error("ZAPI status:", response.status);
-        console.error("ZAPI body:", text);
-
-        return NextResponse.json(
-          {
-            error: "ZAPI request gagal",
-            status: response.status,
-            detail: text,
-            start,
-          },
-          { status: 502 }
-        );
+        throw new Error(`ZAPI error: ${response.status}`);
       }
 
-      const result = JSON.parse(text);
+      const result = await response.json();
 
-      if (!Array.isArray(result.data)) {
-        console.error("Invalid ZAPI response:", result);
+      // Dukung respons berbentuk result.data.data
+      // maupun result.data yang langsung berupa array.
+      const payload = result.data;
+      const rows = Array.isArray(payload)
+        ? payload
+        : payload?.data;
 
+      if (!Array.isArray(rows)) {
         return NextResponse.json(
           {
             error: "Data ZAPI bukan array",
@@ -69,23 +60,21 @@ export async function GET() {
       }
 
       if (start === 0) {
-        recordsTotal = result.recordsFiltered ?? result.recordsTotal ?? 0;
+        recordsTotal = Number(
+          (Array.isArray(payload) ? result : payload)
+            ?.recordsFiltered ??
+          (Array.isArray(payload) ? result : payload)
+            ?.recordsTotal ??
+          rows.length
+        );
       }
 
-      if (result.data.length === 0) break;
+      if (rows.length === 0) break;
 
-      allSecurities.push(...result.data);
+      allSecurities.push(...rows);
+      start += rows.length;
 
-      console.log(
-        `Fetched: ${allSecurities.length}/${recordsTotal}`
-      );
-
-      start += result.data.length;
-
-      if (
-        result.data.length < pageSize ||
-        (recordsTotal > 0 && start >= recordsTotal)
-      ) {
+      if (start >= recordsTotal || rows.length < pageSize) {
         break;
       }
     }
@@ -100,11 +89,10 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        error: "Terjadi kesalahan saat mengambil data emiten",
-        detail:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: "Gagal mengambil data emiten",
+        detail: error instanceof Error
+          ? error.message
+          : String(error),
       },
       { status: 500 }
     );
