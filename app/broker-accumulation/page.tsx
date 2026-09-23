@@ -1,15 +1,12 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/set-state-in-effect */
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LucideEraser, LucideX, Search, Loader2 } from "lucide-react";
-
+import { LucideEraser, LucideX, Loader2 } from "lucide-react";
 import Input from "../components/fragments/ui/input";
 import { BrokerPopup } from "../components/fragments/popup/brokerPopup";
-
-// ======================================================
-// TYPES
-// ======================================================
 
 type BrokerData = {
   id: string;
@@ -26,21 +23,33 @@ type Security = {
   name: string;
 };
 
+type BrokerOption = {
+  broker_code: string;
+  broker_name: string;
+  is_foreign: boolean | null;
+  is_bumn?: boolean;
+  category?: string;
+  type?: string;
+  [key: string]: unknown;
+};
+
+type OwnershipResponse = {
+  code: string;
+  shares: string | number | null;
+  freeFloatPercent: string | number | null;
+  error?: string;
+};
+
 const STORAGE_KEY = "broker-accumulation-data";
 const SECURITIES_CACHE_KEY = "idx-securities-cache-v1";
+const BROKERS_CACHE_KEY = "idx-brokers-cache-v1";
 
+// Form hanya membutuhkan broker, emiten, dan net buy.
 const initialForm = {
   broker: "",
   emiten: "",
-  freeFloat: "",
-  cso: "",
   netBuy: "",
 };
-
-// ======================================================
-// NORMALIZE DATA EMITEN DARI API
-// Mendukung Code/code dan Name/name
-// ======================================================
 
 function normalizeSecurities(payload: unknown): Security[] {
   let rows: unknown[] = [];
@@ -90,24 +99,70 @@ function normalizeSecurities(payload: unknown): Security[] {
     })
     .filter((item): item is Security => item !== null);
 
-  // Hilangkan duplikat berdasarkan kode saham
-  const unique = new Map<string, Security>();
-
-  for (const item of mapped) {
-    unique.set(item.code, item);
-  }
-
-  return Array.from(unique.values()).sort((a, b) =>
-    a.code.localeCompare(b.code)
-  );
+  return Array.from(
+    new Map(mapped.map((item) => [item.code, item])).values()
+  ).sort((a, b) => a.code.localeCompare(b.code));
 }
 
-// ======================================================
-// PARSE VALUE
-// 99,3K  -> 99.300
-// 2,15M  -> 2.150.000
-// 22,70B -> 22.700.000.000
-// ======================================================
+function normalizeBrokers(payload: unknown): BrokerOption[] {
+  let rows: unknown[] = [];
+
+  if (Array.isArray(payload)) {
+    rows = payload;
+  } else if (payload && typeof payload === "object") {
+    const obj = payload as Record<string, unknown>;
+
+    if (Array.isArray(obj.data)) {
+      rows = obj.data;
+    } else if (Array.isArray(obj.brokers)) {
+      rows = obj.brokers;
+    }
+  }
+
+  const mapped = rows
+    .map((item): BrokerOption | null => {
+      if (!item || typeof item !== "object") return null;
+
+      const row = item as Record<string, unknown>;
+
+      const code = String(row.broker_code ?? row.code ?? "")
+        .trim()
+        .toUpperCase();
+
+      if (!code) return null;
+
+      const name = String(row.broker_name ?? row.name ?? code).trim();
+      const rawForeign = row.is_foreign;
+
+      let isForeign: boolean | null = null;
+
+      if (
+        rawForeign === 1 ||
+        rawForeign === "1" ||
+        rawForeign === true
+      ) {
+        isForeign = true;
+      } else if (
+        rawForeign === 0 ||
+        rawForeign === "0" ||
+        rawForeign === false
+      ) {
+        isForeign = false;
+      }
+
+      return {
+        ...row,
+        broker_code: code,
+        broker_name: name || code,
+        is_foreign: isForeign,
+      } as BrokerOption;
+    })
+    .filter((item): item is BrokerOption => item !== null);
+
+  return Array.from(
+    new Map(mapped.map((item) => [item.broker_code, item])).values()
+  ).sort((a, b) => a.broker_code.localeCompare(b.broker_code));
+}
 
 const parseValue = (value: string): number => {
   const clean = value
@@ -126,52 +181,21 @@ const parseValue = (value: string): number => {
         ? 1_000
         : 1;
 
-  const numberPart = clean.replace(/[KMB]$/, "");
-  const number = parseFloat(numberPart);
+  const number = parseFloat(clean.replace(/[KMB]$/, ""));
 
   return Number.isNaN(number) ? 0 : number * multiplier;
 };
-
-// ======================================================
-// FORMAT INPUT
-// ======================================================
 
 const formatInput = (
   field: keyof typeof initialForm,
   value: string
 ): string => {
   if (field === "broker") {
-    return value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+    return value.toUpperCase().replace(/[^A-Z\s]/g, "").slice(0, 50);
   }
 
   if (field === "emiten") {
     return value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
-  }
-
-  if (field === "freeFloat") {
-    let formatted = value.replace(/[^0-9.,%]/g, "").replace(/,/g, ".");
-
-    const hasPercent = formatted.includes("%");
-    formatted = formatted.replace(/%/g, "");
-
-    const firstDot = formatted.indexOf(".");
-
-    if (firstDot !== -1) {
-      formatted =
-        formatted.slice(0, firstDot + 1) +
-        formatted.slice(firstDot + 1).replace(/\./g, "");
-    }
-
-    if (hasPercent) formatted += "%";
-
-    return formatted;
-  }
-
-  if (field === "cso") {
-    return value
-      .toUpperCase()
-      .replace(/[^0-9.,BKM]/g, "")
-      .replace(/,/g, ".");
   }
 
   if (field === "netBuy") {
@@ -184,24 +208,67 @@ const formatInput = (
   return value;
 };
 
-// ======================================================
-// MAIN COMPONENT
-// ======================================================
+function getBrokerColor(broker: BrokerOption) {
+  const row = broker as Record<string, unknown>;
+
+  const isBumn =
+    row.is_bumn === true ||
+    row.is_bumn === 1 ||
+    row.is_bumn === "1" ||
+    String(row.category ?? row.type ?? "")
+      .toLowerCase()
+      .includes("bumn");
+
+  if (isBumn) {
+    return "text-green-600 dark:text-green-400";
+  }
+
+  if (broker.is_foreign === true) {
+    return "text-red-500 dark:text-red-400";
+  }
+
+  return "text-zinc-900 dark:text-zinc-100";
+}
+
+function formatNumberForInput(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
+function formatPercentForInput(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+
+  const text = String(value).trim();
+
+  return text.endsWith("%") ? text : `${text}%`;
+}
 
 export default function BrokerAccumulation() {
   const [form, setForm] = useState(initialForm);
   const [data, setData] = useState<BrokerData[]>([]);
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
 
-  // Data emiten
   const [securities, setSecurities] = useState<Security[]>([]);
   const [isSecuritiesLoading, setIsSecuritiesLoading] = useState(false);
   const [securitiesError, setSecuritiesError] = useState("");
 
-  // Dropdown emiten
+  const [brokers, setBrokers] = useState<BrokerOption[]>([]);
+  const [isBrokersLoading, setIsBrokersLoading] = useState(false);
+  const [brokersError, setBrokersError] = useState("");
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [ownershipError, setOwnershipError] = useState("");
+
   const [isEmitenDropdownOpen, setIsEmitenDropdownOpen] = useState(false);
+  const [isBrokerDropdownOpen, setIsBrokerDropdownOpen] = useState(false);
 
   const emitenWrapperRef = useRef<HTMLDivElement>(null);
+  const brokerWrapperRef = useRef<HTMLDivElement>(null);
 
   const [popupData, setPopupData] = useState<{
     emiten: string;
@@ -218,13 +285,9 @@ export default function BrokerAccumulation() {
   const [sortBy, setSortBy] = useState<"accumulation" | "emiten">(
     "accumulation"
   );
-
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
-  // ======================================================
-  // LOAD TABEL BROKER DARI LOCAL STORAGE
-  // ======================================================
-
+  // LOAD LOCAL STORAGE DATA
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -252,10 +315,7 @@ export default function BrokerAccumulation() {
     }
   }, []);
 
-  // ======================================================
-  // SAVE TABEL BROKER KE LOCAL STORAGE
-  // ======================================================
-
+  // SAVE TABLE DATA
   useEffect(() => {
     if (!isStorageLoaded) return;
 
@@ -266,31 +326,19 @@ export default function BrokerAccumulation() {
     }
   }, [data, isStorageLoaded]);
 
-  // ======================================================
-  // LOAD DATA EMITEN
-  //
-  // 1. Cek localStorage dulu.
-  // 2. Kalau cache ada, langsung gunakan.
-  // 3. Kalau belum ada, fetch dari Firestore API.
-  // 4. Simpan hasil fetch ke localStorage.
-  // ======================================================
-
+  // LOAD EMITEN
   useEffect(() => {
-    let isCancelled = false;
+    let cancelled = false;
 
     const loadSecurities = async () => {
-      // Gunakan cache lokal jika tersedia
       try {
         const cached = localStorage.getItem(SECURITIES_CACHE_KEY);
 
         if (cached) {
-          const parsed: unknown = JSON.parse(cached);
-          const normalized = normalizeSecurities(parsed);
+          const normalized = normalizeSecurities(JSON.parse(cached));
 
           if (normalized.length > 0) {
             setSecurities(normalized);
-
-            // Cache tersedia, jadi tidak fetch ulang
             return;
           }
         }
@@ -298,7 +346,6 @@ export default function BrokerAccumulation() {
         console.error("Cache emiten rusak:", error);
       }
 
-      // Fetch hanya jika cache belum tersedia
       setIsSecuritiesLoading(true);
       setSecuritiesError("");
 
@@ -306,7 +353,7 @@ export default function BrokerAccumulation() {
         const response = await fetch("/api/securities");
 
         if (!response.ok) {
-          throw new Error(`Gagal mengambil data emiten (${response.status})`);
+          throw new Error(`Gagal mengambil emiten (${response.status})`);
         }
 
         const result: unknown = await response.json();
@@ -316,121 +363,172 @@ export default function BrokerAccumulation() {
           throw new Error("Data emiten kosong atau format API tidak sesuai.");
         }
 
-        if (isCancelled) return;
+        if (cancelled) return;
 
         setSecurities(normalized);
-
-        // Simpan cache emiten di browser
-        try {
-          localStorage.setItem(
-            SECURITIES_CACHE_KEY,
-            JSON.stringify(normalized)
-          );
-        } catch (error) {
-          console.error("Gagal menyimpan cache emiten:", error);
-        }
+        localStorage.setItem(
+          SECURITIES_CACHE_KEY,
+          JSON.stringify(normalized)
+        );
       } catch (error) {
-        if (isCancelled) return;
-
-        console.error("Gagal load emiten:", error);
+        if (cancelled) return;
 
         setSecuritiesError(
-          error instanceof Error
-            ? error.message
-            : "Gagal memuat data emiten."
+          error instanceof Error ? error.message : "Gagal memuat emiten."
         );
       } finally {
-        if (!isCancelled) {
-          setIsSecuritiesLoading(false);
-        }
+        if (!cancelled) setIsSecuritiesLoading(false);
       }
     };
 
     loadSecurities();
 
     return () => {
-      isCancelled = true;
+      cancelled = true;
     };
   }, []);
 
-  // ======================================================
-  // CLOSE DROPDOWN SAAT KLIK DI LUAR
-  // ======================================================
+  // LOAD BROKERS
+  useEffect(() => {
+    let cancelled = false;
 
+    const loadBrokers = async () => {
+      try {
+        const cached = localStorage.getItem(BROKERS_CACHE_KEY);
+
+        if (cached) {
+          const normalized = normalizeBrokers(JSON.parse(cached));
+
+          if (normalized.length > 0) {
+            setBrokers(normalized);
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Cache broker rusak:", error);
+      }
+
+      setIsBrokersLoading(true);
+      setBrokersError("");
+
+      try {
+        const response = await fetch("/api/brokers");
+
+        if (!response.ok) {
+          throw new Error(`Gagal mengambil broker (${response.status})`);
+        }
+
+        const result: unknown = await response.json();
+        const normalized = normalizeBrokers(result);
+
+        if (normalized.length === 0) {
+          throw new Error("Data broker kosong atau format API tidak sesuai.");
+        }
+
+        if (cancelled) return;
+
+        setBrokers(normalized);
+        localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify(normalized));
+      } catch (error) {
+        if (cancelled) return;
+
+        setBrokersError(
+          error instanceof Error ? error.message : "Gagal memuat broker."
+        );
+      } finally {
+        if (!cancelled) setIsBrokersLoading(false);
+      }
+    };
+
+    loadBrokers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // CLOSE DROPDOWNS ON OUTSIDE CLICK
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+
       if (
         emitenWrapperRef.current &&
-        !emitenWrapperRef.current.contains(event.target as Node)
+        !emitenWrapperRef.current.contains(target)
       ) {
         setIsEmitenDropdownOpen(false);
+      }
+
+      if (
+        brokerWrapperRef.current &&
+        !brokerWrapperRef.current.contains(target)
+      ) {
+        setIsBrokerDropdownOpen(false);
       }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
 
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ======================================================
-  // FILTER EMITEN BERDASARKAN KODE YANG DIKETIK
-  // ======================================================
-
+  // FILTER EMITEN
   const filteredSecurities = useMemo(() => {
     const query = form.emiten.trim().toUpperCase();
 
-    if (!query) {
-      return securities.slice(0, 50);
-    }
-
     return securities
-      .filter((item) => item.code.startsWith(query))
+      .filter((item) => !query || item.code.startsWith(query))
       .slice(0, 50);
   }, [securities, form.emiten]);
 
-  // ======================================================
-  // HANDLE CHANGE
-  // ======================================================
+  // FILTER BROKER
+  const filteredBrokers = useMemo(() => {
+    const query = form.broker.trim().toUpperCase();
+
+    return brokers
+      .filter((broker) => {
+        if (!query) return true;
+
+        return (
+          broker.broker_code.toUpperCase().includes(query) ||
+          broker.broker_name.toUpperCase().includes(query)
+        );
+      })
+      .slice(0, 50);
+  }, [brokers, form.broker]);
 
   const handleChange = (field: keyof typeof form, value: string) => {
-    const formattedValue = formatInput(field, value);
-
     setForm((prev) => ({
       ...prev,
-      [field]: formattedValue,
+      [field]: formatInput(field, value),
     }));
   };
 
-  // ======================================================
-  // PILIH EMITEN DARI DROPDOWN
-  // ======================================================
-
+  // PILIH EMITEN: TIDAK FETCH OWNERSHIP
   const handleSelectEmiten = (security: Security) => {
     setForm((prev) => ({
       ...prev,
       emiten: security.code,
     }));
 
+    setOwnershipError("");
     setIsEmitenDropdownOpen(false);
   };
 
-  // ======================================================
-  // DELETE DATA
-  // ======================================================
+  const handleSelectBroker = (broker: BrokerOption) => {
+    setForm((prev) => ({
+      ...prev,
+      broker: broker.broker_code,
+    }));
+
+    setIsBrokerDropdownOpen(false);
+  };
 
   const handleDelete = (id: string) => {
     setData((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const handleClearAll = () => {
-    setData([]);
-  };
-
-  // ======================================================
-  // SORTING
-  // ======================================================
+  const handleClearAll = () => setData([]);
 
   const sortedData = [...data].sort((a, b) => {
     const comparison =
@@ -441,17 +539,16 @@ export default function BrokerAccumulation() {
     return sortDirection === "asc" ? comparison : -comparison;
   });
 
-  // ======================================================
-  // SUBMIT
-  // ======================================================
+  // SUBMIT: FETCH CSO & FREE FLOAT HANYA SAAT TOMBOL DIKLIK
+  const handleSubmit = async () => {
+    if (isSubmitting) return;
 
-  const handleSubmit = () => {
     const missing: string[] = [];
 
     if (!form.broker.trim()) {
       missing.push("Kode Broker");
     } else if (!/^[A-Z]{2}$/.test(form.broker)) {
-      missing.push("Kode Broker harus 2 huruf");
+      missing.push("Pilih broker dari dropdown");
     }
 
     if (!form.emiten.trim()) {
@@ -460,9 +557,9 @@ export default function BrokerAccumulation() {
       missing.push("Kode Emiten harus 4 huruf");
     }
 
-    if (!form.freeFloat.trim()) missing.push("Free Float");
-    if (!form.cso.trim()) missing.push("CSO");
-    if (!form.netBuy.trim()) missing.push("Net Buy");
+    if (!form.netBuy.trim()) {
+      missing.push("Net Buy");
+    }
 
     if (missing.length > 0) {
       setMissingFields(missing);
@@ -470,56 +567,110 @@ export default function BrokerAccumulation() {
       return;
     }
 
-    // CSO dalam saham
-    const cso = parseValue(form.cso);
+    setIsSubmitting(true);
+    setOwnershipError("");
 
-    // Free float dalam persen
-    const freeFloatPercent = parseFloat(
-      form.freeFloat.replace(",", ".").replace("%", "")
-    );
+    try {
+      const ticker = form.emiten.trim().toUpperCase();
 
-    // Net buy dalam lot
-    const netBuyLot = parseValue(form.netBuy);
+      // Fetch database hanya saat tombol Tampilkan diklik.
+      const response = await fetch(
+        `/api/securities/${encodeURIComponent(ticker)}/ownership`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
 
-    // Jumlah saham free float
-    const freeFloatShares = cso * (freeFloatPercent / 100);
+      const result: OwnershipResponse = await response.json();
 
-    // Lot ke saham
-    const netBuyShares = netBuyLot * 100;
+      if (!response.ok) {
+        throw new Error(result.error || `Gagal mengambil data ${ticker}`);
+      }
 
-    // Persentase akumulasi terhadap free float
-    const accumulation =
-      freeFloatShares > 0
-        ? (netBuyShares / freeFloatShares) * 100
-        : 0;
+      if (
+        result.shares === null ||
+        result.shares === undefined ||
+        result.freeFloatPercent === null ||
+        result.freeFloatPercent === undefined
+      ) {
+        throw new Error(`Data CSO atau Free Float ${ticker} belum tersedia`);
+      }
 
-    setData((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        broker: form.broker.toUpperCase(),
-        emiten: form.emiten.toUpperCase(),
-        freeFloat: form.freeFloat.endsWith("%")
-          ? form.freeFloat
-          : `${form.freeFloat}%`,
-        cso: form.cso.toUpperCase(),
-        netBuy: form.netBuy.toUpperCase(),
-        accumulation,
-      },
-    ]);
+      // CSO asli untuk perhitungan
+      const cso = Number(result.shares);
 
-    setForm(initialForm);
-    setIsEmitenDropdownOpen(false);
+      // CSO ringkas khusus tampilan tabel dan popup
+      const csoValue = formatShares(result.shares);
+
+      const freeFloatValue = formatPercentForInput(
+        result.freeFloatPercent
+      );
+
+      const freeFloatPercent = parseFloat(
+        String(result.freeFloatPercent)
+          .replace("%", "")
+          .replace(",", ".")
+      );
+
+      const netBuyLot = parseValue(form.netBuy);
+
+      if (
+        !Number.isFinite(cso) ||
+        cso <= 0 ||
+        !Number.isFinite(freeFloatPercent) ||
+        freeFloatPercent <= 0 ||
+        freeFloatPercent > 100
+      ) {
+        throw new Error(`Data CSO atau Free Float ${ticker} tidak valid`);
+      }
+
+      if (!Number.isFinite(netBuyLot)) {
+        throw new Error("Nilai Net Buy tidak valid");
+      }
+
+      // CSO = jumlah saham.
+      // Free float shares = CSO × free float percentage.
+      // Net Buy diinput dalam lot (1 lot = 100 saham).
+      const freeFloatShares = cso * (freeFloatPercent / 100);
+      const netBuyShares = netBuyLot * 100;
+
+      const accumulation =
+        freeFloatShares > 0
+          ? (netBuyShares / freeFloatShares) * 100
+          : 0;
+
+      // Simpan hasil ke tabel dan localStorage.
+      // CSO dan Free Float berasal dari database, bukan input user.
+      setData((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          broker: form.broker.toUpperCase(),
+          emiten: ticker,
+          freeFloat: freeFloatValue,
+          cso: csoValue,
+          netBuy: form.netBuy.toUpperCase(),
+          accumulation,
+        },
+      ]);
+
+      setForm(initialForm);
+      setIsEmitenDropdownOpen(false);
+      setIsBrokerDropdownOpen(false);
+    } catch (error) {
+      setOwnershipError(
+        error instanceof Error
+          ? error.message
+          : "Gagal mengambil data CSO dan Free Float"
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
-
-  // ======================================================
-  // RENDER
-  // ======================================================
 
   return (
     <div className="relative flex h-full w-full flex-col gap-4 overflow-x-auto px-4 py-4 dark:bg-zinc-950 md:mx-auto md:w-1/2">
-      {/* HEADER */}
-
       <div>
         <h1 className="text-center text-xl font-semibold text-zinc-900 dark:text-white">
           Broker Accumulation
@@ -530,42 +681,25 @@ export default function BrokerAccumulation() {
         </p>
       </div>
 
-      {/* INPUT */}
-
-      <div className="grid grid-cols-2 gap-2 rounded-xl border-2 border-zinc-200 p-2 dark:border-zinc-800 md:grid-cols-5">
-        {/* BROKER */}
-
-        <Input
-          placeholder="Broker"
-          type="text"
-          value={form.broker}
-          maxLength={2}
-          className="text-center uppercase"
-          onChange={(e) => handleChange("broker", e.target.value)}
-        />
-
-        {/* EMITEN SEARCHABLE DROPDOWN */}
-
+      {/* FORM INPUT: EMITEN, BROKER, NET BUY */}
+      <div className="flex flex-col gap-2 rounded-xl border-2 border-zinc-200 p-2 dark:border-zinc-800 ">
+        {/* EMITEN */}
         <div ref={emitenWrapperRef} className="relative min-w-0">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder={
-                isSecuritiesLoading ? "Memuat emiten..." : "Emiten"
-              }
-              value={form.emiten}
-              maxLength={4}
-              autoComplete="off"
-              className="h-full min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-center text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-              onFocus={() => setIsEmitenDropdownOpen(true)}
-              onChange={(e) => {
-                handleChange("emiten", e.target.value);
-                setIsEmitenDropdownOpen(true);
-              }}
-            />
-          </div>
-
-          {/* DROPDOWN */}
+          <input
+            type="text"
+            placeholder={
+              isSecuritiesLoading ? "Memuat emiten..." : "Emiten"
+            }
+            value={form.emiten}
+            maxLength={4}
+            autoComplete="off"
+            className="min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2  text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            onFocus={() => setIsEmitenDropdownOpen(true)}
+            onChange={(e) => {
+              handleChange("emiten", e.target.value);
+              setIsEmitenDropdownOpen(true);
+            }}
+          />
 
           {isEmitenDropdownOpen && (
             <div className="absolute left-0 top-full z-50 mt-1 max-h-64 w-64 max-w-[85vw] overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
@@ -585,11 +719,7 @@ export default function BrokerAccumulation() {
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => handleSelectEmiten(security)}
-                    className={`flex w-full flex-col border-b border-zinc-100 px-3 py-2 text-left transition last:border-0 hover:bg-yellow-500/10 dark:border-zinc-800 ${
-                      form.emiten === security.code
-                        ? "bg-yellow-500/10"
-                        : ""
-                    }`}
+                    className="flex w-full flex-col border-b border-zinc-100 px-3 py-2 text-left transition last:border-0 hover:bg-yellow-500/10 dark:border-zinc-800"
                   >
                     <span className="text-sm font-semibold text-yellow-600 dark:text-yellow-400">
                       {security.code}
@@ -604,72 +734,106 @@ export default function BrokerAccumulation() {
                 ))
               ) : (
                 <div className="px-3 py-4 text-center text-xs text-zinc-500">
-                  {form.emiten
-                    ? `Emiten "${form.emiten}" tidak ditemukan`
-                    : "Data emiten tidak tersedia"}
+                  Emiten tidak ditemukan
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* FREE FLOAT */}
+        {/* BROKER */}
+        <div ref={brokerWrapperRef} className="relative min-w-0">
+          <input
+            type="text"
+            placeholder={isBrokersLoading ? "Memuat broker..." : "Broker"}
+            value={form.broker}
+            autoComplete="off"
+            className="min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            onFocus={() => setIsBrokerDropdownOpen(true)}
+            onChange={(e) => {
+              handleChange("broker", e.target.value);
+              setIsBrokerDropdownOpen(true);
+            }}
+          />
 
-        <Input
-          placeholder="FREE FLOAT"
-          type="text"
-          value={form.freeFloat}
-          className="text-center"
-          onChange={(e) => handleChange("freeFloat", e.target.value)}
-        />
+          {isBrokerDropdownOpen && (
+            <div className="absolute top-full z-50 mt-1 max-h-64 w-72 max-w-[85vw] overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+              {isBrokersLoading ? (
+                <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-zinc-500">
+                  <Loader2 size={14} className="animate-spin" />
+                  Memuat data broker...
+                </div>
+              ) : brokersError ? (
+                <div className="px-3 py-3 text-xs text-red-500">
+                  {brokersError}
+                </div>
+              ) : filteredBrokers.length > 0 ? (
+                filteredBrokers.map((broker) => (
+                  <button
+                    key={broker.broker_code}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleSelectBroker(broker)}
+                    className="flex w-full flex-col border-b border-zinc-100 px-3 py-2 text-left transition last:border-0 hover:bg-yellow-500/10 dark:border-zinc-800"
+                  >
+                    <span
+                      className={`text-sm font-semibold ${getBrokerColor(
+                        broker
+                      )}`}
+                    >
+                      {broker.broker_code}
+                    </span>
 
-        {/* CSO */}
-
-        <Input
-          placeholder="CSO"
-          type="text"
-          value={form.cso}
-          className="text-center uppercase"
-          onChange={(e) => handleChange("cso", e.target.value)}
-        />
+                    <span className="line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      {broker.broker_name}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-4 text-center text-xs text-zinc-500">
+                  Broker tidak ditemukan
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* NET BUY */}
-
         <Input
           placeholder="Net Buy"
           type="text"
           value={form.netBuy}
-          className="text-center uppercase"
           onChange={(e) => handleChange("netBuy", e.target.value)}
         />
       </div>
 
-      {/* INFO CACHE */}
+      {/* ERROR OWNERSHIP */}
+      {ownershipError && (
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-center text-xs text-red-500">
+          {ownershipError}
+        </div>
+      )}
 
-      <p className="text-[11px] text-zinc-500">
-        {securities.length > 0
-          ? `${securities.length} emiten tersedia di cache lokal`
-          : isSecuritiesLoading
-            ? "Sedang mengambil data emiten..."
-            : ""}
-      </p>
-
-      {/* BUTTON SUBMIT */}
-
+      {/* TAMPILKAN */}
       <button
         type="button"
         onClick={handleSubmit}
-        className="h-11 rounded-xl border border-yellow-500/30 bg-yellow-500/10 text-sm font-medium text-yellow-600 transition-all duration-300 hover:border-yellow-500/60 hover:bg-yellow-500/15 hover:shadow-[0_0_25px_rgba(234,179,8,0.12)] active:scale-[0.98] dark:text-yellow-400"
+        disabled={isSubmitting}
+        className="flex h-11 items-center justify-center gap-2 rounded-xl border border-yellow-500/30 bg-yellow-500/10 text-sm font-medium text-yellow-600 transition-all duration-300 hover:border-yellow-500/60 hover:bg-yellow-500/15 hover:shadow-[0_0_25px_rgba(234,179,8,0.12)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:text-yellow-400"
       >
-        Tampilkan
+        {isSubmitting ? (
+          <>
+            <Loader2 size={15} className="animate-spin" />
+            Mengambil data...
+          </>
+        ) : (
+          "Tampilkan"
+        )}
       </button>
 
       {/* TABLE */}
-
       {data.length > 0 && (
         <>
-          {/* TABLE TOOLBAR */}
-
           <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-100 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 sm:px-4">
             <div className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -679,9 +843,7 @@ export default function BrokerAccumulation() {
               <select
                 value={sortBy}
                 onChange={(e) =>
-                  setSortBy(
-                    e.target.value as "accumulation" | "emiten"
-                  )
+                  setSortBy(e.target.value as "accumulation" | "emiten")
                 }
                 className="min-w-0 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
                 aria-label="Urutkan berdasarkan"
@@ -698,11 +860,6 @@ export default function BrokerAccumulation() {
                   )
                 }
                 className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-yellow-500 hover:text-yellow-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:text-yellow-400"
-                aria-label={
-                  sortDirection === "asc"
-                    ? "Ascending, klik untuk descending"
-                    : "Descending, klik untuk ascending"
-                }
               >
                 <span className="text-base leading-none">
                   {sortDirection === "asc" ? "↑" : "↓"}
@@ -722,38 +879,27 @@ export default function BrokerAccumulation() {
             </button>
           </div>
 
-          {/* TABLE BODY */}
-
           <div className="overflow-y-scroll rounded-xl border border-zinc-200 dark:border-zinc-800">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[750px] text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800">
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                      Akumulasi
-                    </th>
-
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                      Kode Broker
-                    </th>
-
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                      Kode Emiten
-                    </th>
-
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                      Free Float
-                    </th>
-
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                      CSO
-                    </th>
-
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400">
-                      Net Buy
-                    </th>
-
-                    <th className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400" />
+                    {[
+                      "Akumulasi",
+                      "Kode Broker",
+                      "Kode Emiten",
+                      "Free Float",
+                      "CSO",
+                      "Net Buy",
+                      "",
+                    ].map((heading, index) => (
+                      <th
+                        key={`${heading}-${index}`}
+                        className="px-4 py-3 text-center font-medium text-zinc-600 dark:text-zinc-400"
+                      >
+                        {heading}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
 
@@ -773,10 +919,30 @@ export default function BrokerAccumulation() {
                         {item.accumulation.toFixed(2)}%
                       </td>
 
-                      <td className="px-4 py-3 text-center font-semibold text-yellow-600 dark:text-yellow-400">
-                        {item.broker}
+                      {/* BROKER COLOR */}
+                      <td className="px-4 py-3 text-center">
+                        {(() => {
+                          const brokerInfo = brokers.find(
+                            (broker) =>
+                              broker.broker_code.toUpperCase() ===
+                              item.broker.toUpperCase()
+                          );
+
+                          return (
+                            <span
+                              className={`font-semibold ${
+                                brokerInfo
+                                  ? getBrokerColor(brokerInfo)
+                                  : "text-zinc-900 dark:text-zinc-100"
+                              }`}
+                            >
+                              {item.broker}
+                            </span>
+                          );
+                        })()}
                       </td>
 
+                      {/* EMITEN POPUP */}
                       <td className="px-4 py-3 text-center">
                         <button
                           type="button"
@@ -833,16 +999,13 @@ export default function BrokerAccumulation() {
         </>
       )}
 
-      {/* EMPTY STATE */}
-
       {data.length === 0 && (
         <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800">
           <p className="text-sm text-zinc-400">Belum ada data broker</p>
         </div>
       )}
 
-      {/* POPUP VALIDASI */}
-
+      {/* VALIDATION POPUP */}
       {showPopup && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
@@ -885,8 +1048,7 @@ export default function BrokerAccumulation() {
         </div>
       )}
 
-      {/* POPUP BROKER */}
-
+      {/* BROKER POPUP */}
       {popupData && (
         <BrokerPopup
           {...popupData}
@@ -895,4 +1057,30 @@ export default function BrokerAccumulation() {
       )}
     </div>
   );
+}
+
+function formatShares(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return String(value);
+
+  const abs = Math.abs(number);
+
+  if (abs >= 1_000_000_000) {
+    return `${(number / 1_000_000_000).toFixed(2)}B`;
+  }
+
+  if (abs >= 1_000_000) {
+    return `${(number / 1_000_000).toFixed(2)}M`;
+  }
+
+  if (abs >= 1_000) {
+    return `${(number / 1_000).toFixed(2)}K`;
+  }
+
+  return number.toLocaleString("en-US");
 }
