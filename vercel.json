@@ -1,9 +1,16 @@
-
 {
   "crons": [
     {
       "path": "/api/admin/sync-securities",
       "schedule": "0 0 1 * *"
+    },
+    {
+      "path": "/api/admin/sync-ownership",
+      "schedule": "0 0 1 * *"
+    },
+    {
+      "path": "/api/stock-history/cron",
+      "schedule": "30 13 * * 1-5"
     }
   ]
 }

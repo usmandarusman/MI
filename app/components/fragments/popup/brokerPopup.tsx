@@ -25,33 +25,30 @@ type BrokerPopupProps = {
 };
 
 type CompanyData = {
-  provider: string;
-  code: string;
-  name: string;
   exchange: string;
-  logo: string | null;
-  sector: string | null;
+  symbol: string;
+  name: string;
+  iconUrl: string | null;
   subSector: string | null;
 };
 
 type StockbitProfileResponse = {
   project: string;
-  data: {
-    provider: string;
+  data?: {
+    provider?: string;
     symbol: string;
     name: string;
-    companyId: string;
-    sector: string | null;
-    subSector: string | null;
     exchange: string;
     iconUrl: string | null;
-    background?: string;
-    listingStatus?: string;
-    tradeable?: boolean;
+    subSector: string | null;
   };
-  timestamp: string;
+  timestamp?: string;
   error?: string;
 };
+
+const COMPANY_CACHE_KEY = "manns_company";
+
+type CompanyCache = Record<string, CompanyData>;
 
 export const BrokerPopup = ({
   emiten,
@@ -66,29 +63,62 @@ export const BrokerPopup = ({
 
   const [isClosing, setIsClosing] = useState(false);
 
-  // State data emiten dari Stockbit API
+  // Data profil emiten: gunakan localStorage terlebih dahulu
   const [company, setCompany] = useState<CompanyData | null>(null);
   const [companyLoading, setCompanyLoading] = useState(false);
   const [companyError, setCompanyError] = useState<string | null>(null);
 
-  // Fetch profil emiten berdasarkan kode saham
   useEffect(() => {
     const controller = new AbortController();
+    const code = emiten.trim().toUpperCase();
 
     const fetchCompany = async () => {
-      setCompanyLoading(true);
+      if (!code) {
+        setCompany(null);
+        setCompanyLoading(false);
+        return;
+      }
+
       setCompanyError(null);
+      // Semua profil emiten disimpan dalam satu key: manns_company
+      let companyCache: CompanyCache = {};
+
+      // Cek cache berdasarkan symbol terlebih dahulu
+      try {
+        const cached = localStorage.getItem(COMPANY_CACHE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            companyCache = parsed as CompanyCache;
+          }
+        }
+
+        const cachedCompany = companyCache[code];
+        if (
+          cachedCompany?.symbol &&
+          cachedCompany?.name &&
+          cachedCompany?.exchange
+        ) {
+          setCompany(cachedCompany);
+          setCompanyLoading(false);
+          return;
+        }
+      } catch (error) {
+        console.warn("Gagal membaca cache emiten:", error);
+        companyCache = {};
+      }
+
+      // Cache tidak ditemukan, ambil dari API
+      setCompanyLoading(true);
       setCompany(null);
 
       try {
         const response = await fetch(
-          `/api/profile?code=${encodeURIComponent(emiten.trim())}`,
+          `/api/profile?code=${encodeURIComponent(code)}`,
           { signal: controller.signal }
         );
 
         const result: StockbitProfileResponse = await response.json();
-
-        console.log("Stockbit Profile:", result);
 
         if (!response.ok) {
           throw new Error(
@@ -96,25 +126,33 @@ export const BrokerPopup = ({
           );
         }
 
-        // Struktur JSON Stockbit: result.data
         const profile = result?.data;
 
-        if (!profile?.symbol) {
-          throw new Error(
-            `Data emiten ${emiten} tidak ditemukan`
-          );
+        if (!profile?.symbol || !profile?.name) {
+          throw new Error(`Data emiten ${code} tidak ditemukan`);
         }
 
-        // Mapping data Stockbit ke CompanyData
+        // Simpan hanya field yang dibutuhkan popup
         const companyData: CompanyData = {
-          provider: profile.provider ?? "stockbit",
-          code: profile.symbol,
+          exchange: profile.exchange ?? "IDX",
+          symbol: profile.symbol,
           name: profile.name,
-          exchange: profile.exchange,
-          logo: profile.iconUrl || null,
-          sector: profile.sector || null,
-          subSector: profile.subSector || null,
+          iconUrl: profile.iconUrl ?? null,
+          subSector: profile.subSector ?? null,
         };
+
+        if (controller.signal.aborted) return;
+
+        try {
+          // Tambahkan/update symbol ini tanpa menghapus emiten lain
+          companyCache[code] = companyData;
+          localStorage.setItem(
+            COMPANY_CACHE_KEY,
+            JSON.stringify(companyCache)
+          );
+        } catch (error) {
+          console.warn("Gagal menyimpan cache emiten:", error);
+        }
 
         setCompany(companyData);
       } catch (error) {
@@ -126,9 +164,7 @@ export const BrokerPopup = ({
         }
 
         setCompanyError(
-          error instanceof Error
-            ? error.message
-            : "Terjadi kesalahan"
+          error instanceof Error ? error.message : "Terjadi kesalahan"
         );
       } finally {
         if (!controller.signal.aborted) {
@@ -137,12 +173,7 @@ export const BrokerPopup = ({
       }
     };
 
-    if (emiten.trim()) {
-      fetchCompany();
-    } else {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCompanyLoading(false);
-    }
+    fetchCompany();
 
     return () => controller.abort();
   }, [emiten]);
@@ -241,10 +272,10 @@ export const BrokerPopup = ({
               border-amber-200 bg-amber-50
               dark:border-amber-400/20 dark:bg-amber-400/[0.08]"
             >
-              {company?.logo ? (
+              {company?.iconUrl ? (
                 <img
-                  src={company.logo}
-                  alt={`${company.code} logo`}
+                  src={company.iconUrl}
+                  alt={`${company.symbol} logo`}
                   className="h-full w-full object-contain p-1"
                   onError={(e) => {
                     e.currentTarget.style.display = "none";
@@ -275,7 +306,7 @@ export const BrokerPopup = ({
                   dark:border-amber-400/20 dark:bg-amber-400/10
                   dark:text-amber-400"
                 >
-                  {company?.exchange ?? company?.provider}
+                  {company?.exchange ?? "Stockbit"}
                 </span>
               </div>
 

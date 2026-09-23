@@ -556,7 +556,7 @@ export default function BrokerAccumulation() {
               value={form.emiten}
               maxLength={4}
               autoComplete="off"
-              className="h-full min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 pr-8 text-center text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+              className="h-full min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-center text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
               onFocus={() => setIsEmitenDropdownOpen(true)}
               onChange={(e) => {
                 handleChange("emiten", e.target.value);
