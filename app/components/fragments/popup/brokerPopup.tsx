@@ -50,6 +50,48 @@ const COMPANY_CACHE_KEY = "manns_company";
 
 type CompanyCache = Record<string, CompanyData>;
 
+// Simpan Promise yang sedang berjalan berdasarkan kode emiten.
+// Jika React Strict Mode memicu useEffect dua kali, request kedua
+// akan menggunakan Promise yang sama, bukan mengirim fetch baru.
+const profileRequests = new Map<string, Promise<StockbitProfileResponse>>();
+
+function getCompanyProfile(code: string): Promise<StockbitProfileResponse> {
+  const key = code.trim().toUpperCase();
+  const existingRequest = profileRequests.get(key);
+
+  if (existingRequest) return existingRequest;
+
+  const request: Promise<StockbitProfileResponse> = (async () => {
+    console.count(`[PROFILE FETCH → API] ${key}`);
+
+    const response = await fetch(
+      `/api/profile?code=${encodeURIComponent(key)}`
+    );
+
+    const result: StockbitProfileResponse = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error ?? "Gagal mengambil data emiten");
+    }
+
+    return result;
+  })();
+
+  profileRequests.set(key, request);
+
+  // Hapus Promise setelah selesai agar request berikutnya bisa retry
+  // jika diperlukan. Catch mencegah unhandled rejection dari finally().
+  void request
+    .finally(() => {
+      if (profileRequests.get(key) === request) {
+        profileRequests.delete(key);
+      }
+    })
+    .catch(() => {});
+
+  return request;
+}
+
 export const BrokerPopup = ({
   emiten,
   freeFloat,
@@ -69,23 +111,26 @@ export const BrokerPopup = ({
   const [companyError, setCompanyError] = useState<string | null>(null);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let active = true;
     const code = emiten.trim().toUpperCase();
 
     const fetchCompany = async () => {
       if (!code) {
         setCompany(null);
         setCompanyLoading(false);
+        setCompanyError(null);
         return;
       }
 
       setCompanyError(null);
+
       // Semua profil emiten disimpan dalam satu key: manns_company
       let companyCache: CompanyCache = {};
 
       // Cek cache berdasarkan symbol terlebih dahulu
       try {
         const cached = localStorage.getItem(COMPANY_CACHE_KEY);
+
         if (cached) {
           const parsed = JSON.parse(cached);
           if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -94,13 +139,16 @@ export const BrokerPopup = ({
         }
 
         const cachedCompany = companyCache[code];
+
         if (
           cachedCompany?.symbol &&
           cachedCompany?.name &&
           cachedCompany?.exchange
         ) {
-          setCompany(cachedCompany);
-          setCompanyLoading(false);
+          if (active) {
+            setCompany(cachedCompany);
+            setCompanyLoading(false);
+          }
           return;
         }
       } catch (error) {
@@ -108,31 +156,21 @@ export const BrokerPopup = ({
         companyCache = {};
       }
 
-      // Cache tidak ditemukan, ambil dari API
-      setCompanyLoading(true);
-      setCompany(null);
+      // Cache tidak ditemukan, ambil profile.
+      // getCompanyProfile melakukan deduplication untuk kode yang sama.
+      if (active) {
+        setCompanyLoading(true);
+        setCompany(null);
+      }
 
       try {
-        const response = await fetch(
-          `/api/profile?code=${encodeURIComponent(code)}`,
-          { signal: controller.signal }
-        );
-
-        const result: StockbitProfileResponse = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error ?? "Gagal mengambil data emiten"
-          );
-        }
-
+        const result = await getCompanyProfile(code);
         const profile = result?.data;
 
         if (!profile?.symbol || !profile?.name) {
           throw new Error(`Data emiten ${code} tidak ditemukan`);
         }
 
-        // Simpan hanya field yang dibutuhkan popup
         const companyData: CompanyData = {
           exchange: profile.exchange ?? "IDX",
           symbol: profile.symbol,
@@ -141,41 +179,49 @@ export const BrokerPopup = ({
           subSector: profile.subSector ?? null,
         };
 
-        if (controller.signal.aborted) return;
+        // Jangan update state/cache dari effect yang sudah cleanup.
+        if (!active) return;
 
         try {
-          // Tambahkan/update symbol ini tanpa menghapus emiten lain
-          companyCache[code] = companyData;
-          localStorage.setItem(
-            COMPANY_CACHE_KEY,
-            JSON.stringify(companyCache)
-          );
+          // Baca ulang cache terbaru sebelum merge agar data emiten lain
+          // yang mungkin tersimpan bersamaan tidak tertimpa.
+          let latestCache: CompanyCache = {};
+          const latestCached = localStorage.getItem(COMPANY_CACHE_KEY);
+
+          if (latestCached) {
+            const parsed = JSON.parse(latestCached);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              latestCache = parsed as CompanyCache;
+            }
+          }
+
+          latestCache[code] = companyData;
+          localStorage.setItem(COMPANY_CACHE_KEY, JSON.stringify(latestCache));
         } catch (error) {
           console.warn("Gagal menyimpan cache emiten:", error);
         }
 
         setCompany(companyData);
       } catch (error) {
-        if (
-          error instanceof Error &&
-          error.name === "AbortError"
-        ) {
-          return;
-        }
+        if (!active) return;
 
         setCompanyError(
           error instanceof Error ? error.message : "Terjadi kesalahan"
         );
       } finally {
-        if (!controller.signal.aborted) {
+        if (active) {
           setCompanyLoading(false);
         }
       }
     };
 
-    fetchCompany();
+    void fetchCompany();
 
-    return () => controller.abort();
+    // Jangan abort fetch bersama: effect kedua (Strict Mode) mungkin
+    // sedang menunggu Promise request yang sama.
+    return () => {
+      active = false;
+    };
   }, [emiten]);
 
   const closePopup = () => {

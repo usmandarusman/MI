@@ -6,10 +6,14 @@
     },
     {
       "path": "/api/admin/sync-ownership",
-      "schedule": "0 0 1 * *"
+      "schedule": "15 0 1 * *"
     },
     {
-      "path": "/api/stock-history/cron",
+      "path": "/api/admin/sync-brokers",
+      "schedule": "30 0 1 * *"
+    },
+    {
+      "path": "/api/admin/sync-stocks",
       "schedule": "30 13 * * 1-5"
     }
   ]

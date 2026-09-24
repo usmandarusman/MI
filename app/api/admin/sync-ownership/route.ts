@@ -1,12 +1,11 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-// COLLECTION YANG BENAR
 const COLLECTION = "securities";
 const BATCH_SIZE = 400;
 
@@ -32,10 +31,7 @@ type OwnershipStock = {
 };
 
 function isNumber(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value)
-  );
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isValidInvestor(value: unknown): value is Investor {
@@ -49,9 +45,7 @@ function isValidInvestor(value: unknown): value is Investor {
   );
 }
 
-function validateStock(
-  value: unknown
-): value is OwnershipStock {
+function validateStock(value: unknown): value is OwnershipStock {
   if (!value || typeof value !== "object") return false;
 
   const stock = value as Record<string, unknown>;
@@ -80,19 +74,25 @@ function validateStock(
     return false;
   }
 
-  // Validasi total persentase dengan toleransi pembulatan.
   if (Math.abs(stock.float + stock.freeFloat - 100) > 1) {
     return false;
   }
 
-  if (
-    !Array.isArray(stock.investors) ||
-    !stock.investors.every(isValidInvestor)
-  ) {
-    return false;
+  return (
+    Array.isArray(stock.investors) &&
+    stock.investors.every(isValidInvestor)
+  );
+}
+
+function getPeriod() {
+  const year = process.env.IDX_OWNERSHIP_YEAR;
+  const month = process.env.IDX_OWNERSHIP_MONTH;
+
+  if (!year || !month) {
+    throw new Error("Periode IDX Ownership belum diatur");
   }
 
-  return true;
+  return `${year}-${String(month).padStart(2, "0")}`;
 }
 
 async function fetchOwnershipData() {
@@ -102,9 +102,7 @@ async function fetchOwnershipData() {
   const month = process.env.IDX_OWNERSHIP_MONTH;
 
   if (!apiUrl || !token || !year || !month) {
-    throw new Error(
-      "Environment IDX Ownership belum lengkap"
-    );
+    throw new Error("Environment IDX Ownership belum lengkap");
   }
 
   const monthNumber = Number(month);
@@ -119,16 +117,13 @@ async function fetchOwnershipData() {
   }
 
   const url = new URL(apiUrl);
-
   url.searchParams.set("token", token);
   url.searchParams.set("year", year);
   url.searchParams.set("month", month);
 
   const response = await fetch(url.toString(), {
     method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
+    headers: { Accept: "application/json" },
     cache: "no-store",
     signal: AbortSignal.timeout(30_000),
   });
@@ -141,7 +136,6 @@ async function fetchOwnershipData() {
 
   const json: unknown = await response.json();
 
-  // Support array langsung atau { data: [...] }.
   const data =
     Array.isArray(json)
       ? json
@@ -158,185 +152,156 @@ async function fetchOwnershipData() {
   return data;
 }
 
-function getPeriod() {
-  const year = process.env.IDX_OWNERSHIP_YEAR!;
-  const month = String(
-    process.env.IDX_OWNERSHIP_MONTH!
-  ).padStart(2, "0");
-
-  return `${year}-${month}`;
-}
-
-function normalizeStock(
-  stock: OwnershipStock
-): OwnershipStock {
+function normalizeStock(stock: OwnershipStock) {
   return {
     ...stock,
     ticker: stock.ticker.trim().toUpperCase(),
   };
 }
 
-// GET: preview response API, tidak menulis ke Firestore.
-export async function GET() {
+async function syncOwnership() {
+  const rawData = await fetchOwnershipData();
+
+  const validData = rawData
+    .filter(validateStock)
+    .map(normalizeStock);
+
+  const uniqueStocks = new Map<string, OwnershipStock>();
+
+  for (const stock of validData) {
+    uniqueStocks.set(stock.ticker, stock);
+  }
+
+  const stocks = [...uniqueStocks.values()];
+
+  if (!stocks.length) {
+    throw new Error(
+      "Tidak ada data ownership valid. Firestore tidak diubah."
+    );
+  }
+
+  let written = 0;
+  let skippedMissingDocs = 0;
+
+  for (let i = 0; i < stocks.length; i += BATCH_SIZE) {
+    const chunk = stocks.slice(i, i + BATCH_SIZE);
+    const refs = chunk.map((stock) =>
+      db.collection(COLLECTION).doc(stock.ticker)
+    );
+
+    const snapshots = await db.getAll(...refs);
+    const batch = db.batch();
+    let chunkWritten = 0;
+
+    for (let index = 0; index < chunk.length; index++) {
+      const stock = chunk[index];
+      const snapshot = snapshots[index];
+
+      // Hanya update dokumen securities yang sudah ada.
+      if (!snapshot.exists) {
+        skippedMissingDocs++;
+        continue;
+      }
+
+      batch.set(
+        refs[index],
+        {
+          ownership: {
+            freeFloatPercent: stock.freeFloat,
+            floatPercent: stock.float,
+            investorCount:
+              stock.investorCount ?? stock.investors.length,
+            investors: stock.investors,
+            source: "idx-stocks-ownership",
+            period: getPeriod(),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          ownershipUpdatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      chunkWritten++;
+    }
+
+    if (chunkWritten > 0) {
+      await batch.commit();
+      written += chunkWritten;
+    }
+  }
+
+  return {
+    success: true,
+    mode: "sync",
+    collection: COLLECTION,
+    period: getPeriod(),
+    totalFetched: rawData.length,
+    validCount: stocks.length,
+    written,
+    skippedMissingDocs,
+    invalidCount: rawData.length - validData.length,
+    message: "Ownership berhasil disinkronkan.",
+    syncedAt: new Date().toISOString(),
+  };
+}
+
+function isAuthorized(req: NextRequest) {
+  const auth = req.headers.get("authorization");
+  const manualSecret = req.headers.get("x-sync-secret");
+
+  return (
+    (!!process.env.CRON_SECRET &&
+      auth === `Bearer ${process.env.CRON_SECRET}`) ||
+    (!!process.env.STOCK_SYNC_SECRET &&
+      manualSecret === process.env.STOCK_SYNC_SECRET)
+  );
+}
+
+// Vercel Cron: langsung sync, bukan preview.
+export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json(
+      { success: false, message: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
-    const rawData = await fetchOwnershipData();
-
-    const validData = rawData
-      .filter(validateStock)
-      .map(normalizeStock);
-
-    return NextResponse.json({
-      success: true,
-      mode: "preview",
-      collection: COLLECTION,
-      period: getPeriod(),
-      totalFetched: rawData.length,
-      validCount: validData.length,
-      invalidCount: rawData.length - validData.length,
-      sample: validData.slice(0, 5).map((stock) => ({
-        ticker: stock.ticker,
-        name: stock.name,
-        freeFloat: stock.freeFloat,
-        float: stock.float,
-        investorCount: stock.investors.length,
-      })),
-    });
+    return NextResponse.json(await syncOwnership());
   } catch (error) {
-    console.error("Ownership preview failed:", error);
+    console.error("Ownership cron sync failed:", error);
 
     return NextResponse.json(
       {
         success: false,
         message:
-          error instanceof Error
-            ? error.message
-            : "Preview gagal",
+          error instanceof Error ? error.message : "Sync gagal",
       },
       { status: 500 }
     );
   }
 }
 
-// POST: dry run atau sync ke securities/{TICKER}.
+// Manual POST juga menjalankan sync.
+// Tidak ada dryRun yang bisa membuat cron tidak menulis data.
 export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json(
+      { success: false, message: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
-    // Tambahkan autentikasi admin sebelum production.
-    const body = await req.json().catch(() => ({}));
-
-    // Default dryRun = true.
-    const dryRun = body?.dryRun !== false;
-
-    const rawData = await fetchOwnershipData();
-
-    const validData = rawData
-      .filter(validateStock)
-      .map(normalizeStock);
-
-    const uniqueStocks = new Map<string, OwnershipStock>();
-
-    for (const stock of validData) {
-      uniqueStocks.set(stock.ticker, stock);
-    }
-
-    const stocks = [...uniqueStocks.values()];
-
-    if (dryRun) {
-      return NextResponse.json({
-        success: true,
-        mode: "dryRun",
-        collection: COLLECTION,
-        totalFetched: rawData.length,
-        validCount: stocks.length,
-        invalidCount: rawData.length - validData.length,
-        message: "Dry run selesai. Firestore belum diubah.",
-        sample: stocks.slice(0, 10).map((stock) => ({
-          ticker: stock.ticker,
-          freeFloat: stock.freeFloat,
-          float: stock.float,
-        })),
-      });
-    }
-
-    let written = 0;
-    let skippedMissingDocs = 0;
-
-    for (let i = 0; i < stocks.length; i += BATCH_SIZE) {
-      const chunk = stocks.slice(i, i + BATCH_SIZE);
-      const batch = db.batch();
-
-      // Ambil dokumen yang sudah ada.
-      const refs = chunk.map((stock) =>
-        db.collection(COLLECTION).doc(stock.ticker)
-      );
-
-      const snapshots = await db.getAll(...refs);
-
-      for (let index = 0; index < chunk.length; index++) {
-        const stock = chunk[index];
-        const snapshot = snapshots[index];
-
-        // Hanya update emiten yang sudah ada.
-        // Mencegah pembuatan dokumen duplikat/tidak lengkap.
-        if (!snapshot.exists) {
-          skippedMissingDocs++;
-          continue;
-        }
-
-        batch.set(
-          refs[index],
-          {
-            ownership: {
-              freeFloatPercent: stock.freeFloat,
-              floatPercent: stock.float,
-
-              investorCount:
-                stock.investorCount ??
-                stock.investors.length,
-
-              investors: stock.investors,
-
-              source: "idx-stocks-ownership",
-              period: getPeriod(),
-              updatedAt: FieldValue.serverTimestamp(),
-            },
-
-            ownershipUpdatedAt:
-              FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-
-        written++;
-      }
-
-      // Jangan commit batch kosong.
-      if (written > 0) {
-        await batch.commit();
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
-      mode: "sync",
-      collection: COLLECTION,
-      period: getPeriod(),
-      totalFetched: rawData.length,
-      validCount: stocks.length,
-      written,
-      skippedMissingDocs,
-      invalidCount: rawData.length - validData.length,
-      message: "Ownership berhasil disinkronkan.",
-    });
+    return NextResponse.json(await syncOwnership());
   } catch (error) {
-    console.error("Ownership sync failed:", error);
+    console.error("Ownership manual sync failed:", error);
 
     return NextResponse.json(
       {
         success: false,
         message:
-          error instanceof Error
-            ? error.message
-            : "Sync gagal",
+          error instanceof Error ? error.message : "Sync gagal",
       },
       { status: 500 }
     );

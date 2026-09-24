@@ -15,11 +15,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.ZAPI_API_KEY;
+    const apiKey = process.env.OTHER_ZAPI_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "ZAPI_API_KEY belum dikonfigurasi" },
+        { error: "OTHER_ZAPI_API_KEY belum dikonfigurasi" },
         { status: 500 }
       );
     }
@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     const params = new URLSearchParams({
       symbol: code,
     });
+    console.log(`[PROFILE → ZAPI] ${code} | ${Date.now()}`);
 
     const response = await fetch(
       `https://api.zpi.web.id/v1/finance:stockbit/profile?${params.toString()}`,
