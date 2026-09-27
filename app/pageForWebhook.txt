@@ -1,0 +1,1996 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Radio,
+} from "lucide-react";
+import { InfiniteMarqueeSlider } from "./components/fungsi/infiniteSlider";
+
+/* =========================================================
+   TYPES
+========================================================= */
+
+type BrokerOption = {
+  broker_code: string;
+  broker_id?: number;
+  broker_name: string;
+  is_foreign: boolean | null;
+  is_bumn?: boolean;
+  category?: string;
+  type?: string;
+  source?: string;
+  updatedAt?: unknown;
+  [key: string]: unknown;
+};
+
+type TradePlaneConfig = {
+  enabled: boolean;
+  broker_code: string;
+  broker_id: number | null;
+  broker_name: string;
+  signal_url: string;
+};
+
+type SaveStatus = "idle" | "saving" | "success" | "error";
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+const BROKERS_CACHE_KEY = "idx-brokers-cache-v1";
+const TRADE_PLANE_STORAGE_KEY = "trade-plane-config-v1";
+
+/* =========================================================
+   NOTES
+========================================================= */
+
+const notes = [
+  {
+    id: 1,
+    note: "Fitur untuk mengirimkan signal ke channel.",
+  },
+  {
+    id: 2,
+    note: "Jangan trade dikala market sedang kacau atau ada event tertentu yang berpengaruh terhadap market.",
+  },
+  {
+    id: 3,
+    note: "Sebagus apapun analisamu akan hancur jika ada kejadian atau event tertentu, karena event diatas segalanya dalam dunia saham.",
+  },
+];
+
+/* =========================================================
+   LINKS
+========================================================= */
+
+const links = [
+  {
+    id: 1,
+    title: "Broker Accumulation",
+    description:
+      "Monitoring aktivitas transaksi broker secara terstruktur.",
+    url: "/broker-accumulation",
+  },
+  {
+    id: 2,
+    title: "Broker Movement",
+    description:
+      "Monitor pergerakan broker secara terstruktur.",
+    url: "https://axentraz.id/broker-activity",
+  },
+];
+
+/* =========================================================
+   NORMALIZE BROKERS
+========================================================= */
+
+function normalizeBrokers(
+  payload: unknown
+): BrokerOption[] {
+  let rows: unknown[] = [];
+
+  if (Array.isArray(payload)) {
+    rows = payload;
+  } else if (
+    payload &&
+    typeof payload === "object"
+  ) {
+    const obj = payload as Record<
+      string,
+      unknown
+    >;
+
+    if (Array.isArray(obj.data)) {
+      rows = obj.data;
+    } else if (Array.isArray(obj.brokers)) {
+      rows = obj.brokers;
+    } else if (
+      obj.data &&
+      typeof obj.data === "object" &&
+      Array.isArray(
+        (obj.data as Record<string, unknown>)
+          .data
+      )
+    ) {
+      rows = (
+        obj.data as Record<string, unknown>
+      ).data as unknown[];
+    }
+  }
+
+  const mapped = rows
+    .map(
+      (item): BrokerOption | null => {
+        if (
+          !item ||
+          typeof item !== "object"
+        ) {
+          return null;
+        }
+
+        const row =
+          item as Record<
+            string,
+            unknown
+          >;
+
+        const brokerCode = String(
+          row.broker_code ??
+            row.code ??
+            ""
+        )
+          .trim()
+          .toUpperCase();
+
+        if (!brokerCode) {
+          return null;
+        }
+
+        const brokerName = String(
+          row.broker_name ??
+            row.name ??
+            brokerCode
+        ).trim();
+
+        /* -----------------------------------------
+           FOREIGN
+        ----------------------------------------- */
+
+        const rawForeign =
+          row.is_foreign;
+
+        let isForeign:
+          | boolean
+          | null = null;
+
+        if (
+          rawForeign === true ||
+          rawForeign === 1 ||
+          rawForeign === "1" ||
+          rawForeign === "true"
+        ) {
+          isForeign = true;
+        } else if (
+          rawForeign === false ||
+          rawForeign === 0 ||
+          rawForeign === "0" ||
+          rawForeign === "false"
+        ) {
+          isForeign = false;
+        }
+
+        /* -----------------------------------------
+           BROKER ID
+        ----------------------------------------- */
+
+        let brokerId:
+          | number
+          | undefined;
+
+        if (
+          typeof row.broker_id ===
+          "number"
+        ) {
+          brokerId = row.broker_id;
+        } else if (
+          typeof row.broker_id ===
+            "string" &&
+          row.broker_id.trim() !== ""
+        ) {
+          const parsedId = Number(
+            row.broker_id
+          );
+
+          if (
+            Number.isFinite(parsedId)
+          ) {
+            brokerId = parsedId;
+          }
+        }
+
+        return {
+          ...row,
+          broker_code: brokerCode,
+          broker_id: brokerId,
+          broker_name:
+            brokerName || brokerCode,
+          is_foreign: isForeign,
+        };
+      }
+    )
+    .filter(
+      (
+        item
+      ): item is BrokerOption =>
+        item !== null
+    );
+
+  return Array.from(
+    new Map(
+      mapped.map((broker) => [
+        broker.broker_code,
+        broker,
+      ])
+    ).values()
+  ).sort((a, b) =>
+    a.broker_code.localeCompare(
+      b.broker_code
+    )
+  );
+}
+
+/* =========================================================
+   GET BROKER CACHE
+========================================================= */
+
+function getCachedBrokers(): BrokerOption[] {
+  try {
+    const cached =
+      localStorage.getItem(
+        BROKERS_CACHE_KEY
+      );
+
+    if (!cached) {
+      return [];
+    }
+
+    const parsed: unknown =
+      JSON.parse(cached);
+
+    return normalizeBrokers(parsed);
+  } catch (error) {
+    console.error(
+      "[Trade Plane] Cache broker rusak:",
+      error
+    );
+
+    return [];
+  }
+}
+
+/* =========================================================
+   GET LOCAL TRADE PLANE CONFIG
+========================================================= */
+
+function getTradePlaneConfig():
+  | TradePlaneConfig
+  | null {
+  try {
+    const saved =
+      localStorage.getItem(
+        TRADE_PLANE_STORAGE_KEY
+      );
+
+    if (!saved) {
+      return null;
+    }
+
+    const parsed: unknown =
+      JSON.parse(saved);
+
+    if (
+      !parsed ||
+      typeof parsed !== "object"
+    ) {
+      return null;
+    }
+
+    return parsed as TradePlaneConfig;
+  } catch (error) {
+    console.error(
+      "[Trade Plane] Config rusak:",
+      error
+    );
+
+    return null;
+  }
+}
+
+/* =========================================================
+   SAVE LOCAL TRADE PLANE CONFIG
+========================================================= */
+
+function saveTradePlaneConfig(
+  config: TradePlaneConfig
+) {
+  try {
+    localStorage.setItem(
+      TRADE_PLANE_STORAGE_KEY,
+      JSON.stringify(config)
+    );
+  } catch (error) {
+    console.error(
+      "[Trade Plane] Gagal menyimpan config:",
+      error
+    );
+  }
+}
+
+/* =========================================================
+   HOME
+========================================================= */
+
+export default function Home() {
+  /* =======================================================
+     BROKER
+  ======================================================= */
+
+  const [brokers, setBrokers] =
+    useState<BrokerOption[]>([]);
+
+  const [
+    isBrokerLoading,
+    setIsBrokerLoading,
+  ] = useState(true);
+
+  const [
+    selectedBrokerCode,
+    setSelectedBrokerCode,
+  ] = useState("");
+
+  const [
+    selectedBrokerId,
+    setSelectedBrokerId,
+  ] = useState<number | null>(null);
+
+  /* =======================================================
+     TRADE PLANE
+  ======================================================= */
+
+  const [
+    isTradePlaneOn,
+    setIsTradePlaneOn,
+  ] = useState(false);
+
+  const [
+    signalUrl,
+    setSignalUrl,
+  ] = useState("");
+
+  /* =======================================================
+     SAVE STATE
+  ======================================================= */
+
+  const [
+    saveStatus,
+    setSaveStatus,
+  ] = useState<SaveStatus>("idle");
+
+  /* =======================================================
+     DROPDOWN
+  ======================================================= */
+
+  const [
+    isBrokerDropdownOpen,
+    setIsBrokerDropdownOpen,
+  ] = useState(false);
+
+  const dropdownRef =
+    useRef<HTMLDivElement>(null);
+
+  /* =======================================================
+     LOAD BROKERS + LOCAL CONFIG
+  ======================================================= */
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadData = () => {
+      /* -----------------------------------------
+         BROKER CACHE
+      ----------------------------------------- */
+
+      const cachedBrokers =
+        getCachedBrokers();
+
+      if (!cancelled) {
+        setBrokers(cachedBrokers);
+        setIsBrokerLoading(false);
+      }
+
+      /* -----------------------------------------
+         LOCAL TRADE PLANE CONFIG
+      ----------------------------------------- */
+
+      const savedConfig =
+        getTradePlaneConfig();
+
+      if (
+        savedConfig &&
+        !cancelled
+      ) {
+        setIsTradePlaneOn(
+          Boolean(
+            savedConfig.enabled
+          )
+        );
+
+        setSignalUrl(
+          savedConfig.signal_url ??
+            ""
+        );
+
+        setSelectedBrokerCode(
+          savedConfig.broker_code ??
+            ""
+        );
+
+        setSelectedBrokerId(
+          typeof savedConfig.broker_id ===
+            "number"
+            ? savedConfig.broker_id
+            : null
+        );
+      }
+
+      console.log(
+        `[Trade Plane] Broker cache: ${cachedBrokers.length}`
+      );
+    };
+
+    loadData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* =======================================================
+     CLOSE DROPDOWN WHEN CLICK OUTSIDE
+  ======================================================= */
+
+  useEffect(() => {
+    const handleClickOutside = (
+      event: MouseEvent
+    ) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(
+          event.target as Node
+        )
+      ) {
+        setIsBrokerDropdownOpen(
+          false
+        );
+      }
+    };
+
+    document.addEventListener(
+      "mousedown",
+      handleClickOutside
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handleClickOutside
+      );
+    };
+  }, []);
+
+  /* =======================================================
+     SELECTED BROKER
+  ======================================================= */
+
+  const selectedBroker =
+    brokers.find(
+      (broker) =>
+        broker.broker_code ===
+        selectedBrokerCode
+    ) ?? null;
+
+  /* =======================================================
+     PERSIST LOCAL CONFIG
+  ======================================================= */
+
+  const persistLocalConfig = (
+    overrides?: Partial<TradePlaneConfig>
+  ) => {
+    const broker =
+      brokers.find(
+        (item) =>
+          item.broker_code ===
+          selectedBrokerCode
+      );
+
+    const config: TradePlaneConfig = {
+      enabled:
+        overrides?.enabled ??
+        isTradePlaneOn,
+
+      broker_code:
+        overrides?.broker_code ??
+        selectedBrokerCode,
+
+      broker_id:
+        overrides?.broker_id ??
+        selectedBrokerId,
+
+      broker_name:
+        overrides?.broker_name ??
+        broker?.broker_name ??
+        "",
+
+      signal_url:
+        overrides?.signal_url ??
+        signalUrl,
+    };
+
+    saveTradePlaneConfig(
+      config
+    );
+  };
+
+  /* =======================================================
+     TOGGLE TRADE PLANE
+  ======================================================= */
+
+  const handleTradePlaneToggle =
+    () => {
+      const nextState =
+        !isTradePlaneOn;
+
+      setIsTradePlaneOn(
+        nextState
+      );
+
+      setSaveStatus("idle");
+
+      /*
+       * Simpan status ON/OFF
+       * ke localStorage.
+       *
+       * Firebase baru di-update
+       * ketika tombol Simpan
+       * ditekan.
+       */
+
+      persistLocalConfig({
+        enabled: nextState,
+      });
+
+      /*
+       * Kalau OFF:
+       * dropdown ditutup.
+       */
+
+      if (!nextState) {
+        setIsBrokerDropdownOpen(
+          false
+        );
+      }
+    };
+
+  /* =======================================================
+     SELECT BROKER
+  ======================================================= */
+
+  const handleBrokerSelect = (
+    broker: BrokerOption
+  ) => {
+    const brokerCode =
+      broker.broker_code;
+
+    const brokerId =
+      broker.broker_id ?? null;
+
+    setSelectedBrokerCode(
+      brokerCode
+    );
+
+    setSelectedBrokerId(
+      brokerId
+    );
+
+    setIsBrokerDropdownOpen(
+      false
+    );
+
+    setSaveStatus("idle");
+
+    /*
+     * Simpan sementara ke localStorage.
+     * Firebase tidak diubah sampai
+     * user menekan tombol Simpan.
+     */
+
+    saveTradePlaneConfig({
+      enabled: isTradePlaneOn,
+      broker_code:
+        brokerCode,
+      broker_id:
+        brokerId,
+      broker_name:
+        broker.broker_name,
+      signal_url:
+        signalUrl,
+    });
+
+    console.log(
+      "[Trade Plane] Broker dipilih:",
+      {
+        broker_code:
+          brokerCode,
+        broker_id:
+          brokerId,
+        broker_name:
+          broker.broker_name,
+        is_foreign:
+          broker.is_foreign,
+      }
+    );
+  };
+
+  /* =======================================================
+     SIGNAL URL
+  ======================================================= */
+
+  const handleSignalUrlChange = (
+    value: string
+  ) => {
+    setSignalUrl(value);
+
+    setSaveStatus("idle");
+
+    /*
+     * Hanya simpan sementara
+     * ke localStorage.
+     */
+
+    const broker =
+      brokers.find(
+        (item) =>
+          item.broker_code ===
+          selectedBrokerCode
+      );
+
+    saveTradePlaneConfig({
+      enabled: isTradePlaneOn,
+      broker_code:
+        selectedBrokerCode,
+      broker_id:
+        selectedBrokerId,
+      broker_name:
+        broker?.broker_name ?? "",
+      signal_url: value,
+    });
+  };
+
+  /* =======================================================
+     SAVE TO FIREBASE
+  ======================================================= */
+
+  const handleSaveTradePlane =
+    async () => {
+      if (!isTradePlaneOn) {
+        /*
+         * Kalau OFF, tetap boleh
+         * menyimpan status OFF.
+         */
+
+        setSaveStatus("saving");
+      } else {
+        /*
+         * Kalau ON, broker wajib dipilih.
+         */
+
+        if (
+          !selectedBroker ||
+          !selectedBrokerId
+        ) {
+          setSaveStatus("error");
+          return;
+        }
+      }
+
+      setSaveStatus("saving");
+
+      const config: TradePlaneConfig = {
+        enabled:
+          isTradePlaneOn,
+
+        broker_code:
+          selectedBrokerCode,
+
+        broker_id:
+          selectedBrokerId,
+
+        broker_name:
+          selectedBroker
+            ?.broker_name ?? "",
+
+        signal_url:
+          signalUrl.trim(),
+      };
+
+      try {
+        const response =
+          await fetch(
+            "/api/admin/signal-config",
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body: JSON.stringify(
+                config
+              ),
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ??
+              "Gagal menyimpan konfigurasi"
+          );
+        }
+
+        /*
+         * Firebase berhasil.
+         * Update localStorage sebagai cache.
+         */
+
+        saveTradePlaneConfig(
+          config
+        );
+
+        setSaveStatus(
+          "success"
+        );
+
+        console.log(
+          "[Trade Plane] Config berhasil disimpan:",
+          data
+        );
+      } catch (error) {
+        console.error(
+          "[Trade Plane] Gagal menyimpan:",
+          error
+        );
+
+        setSaveStatus("error");
+      }
+    };
+
+  /* =======================================================
+     RENDER
+  ======================================================= */
+
+  return (
+    <div
+      className="
+        w-full
+        min-h-full
+        px-4
+        py-6
+        dark:bg-zinc-950
+      "
+    >
+      {/* =================================================
+          TITLE
+      ================================================== */}
+
+      <h1 className="text-xl font-semibold">
+        Broker Activity
+      </h1>
+
+      {/* =================================================
+          MAIN WIDTH
+      ================================================== */}
+
+      <div className="relative mt-4 w-full md:w-2/3 lg:w-1/2">
+
+        {/* OUTER GLOW */}
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            -inset-6
+            rounded-4xl
+            dark:bg-yellow-400/25
+            blur-3xl
+            opacity-60
+            dark:opacity-80
+          "
+        />
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            -inset-2
+            rounded-[1.5rem]
+            bg-gradient-to-r
+            from-yellow-500/20
+            via-yellow-300/10
+            to-yellow-500/20
+            blur-xl
+            opacity-50
+            dark:opacity-70
+          "
+        />
+
+        {/* =================================================
+            BROKER TOOLS
+        ================================================== */}
+
+        <main
+          className="
+            relative
+            z-10
+            w-full
+            rounded-2xl
+            border
+            border-zinc-200
+            bg-white/80
+            p-5
+            shadow-xl
+            backdrop-blur-xl
+            dark:border-yellow-500/20
+            dark:bg-zinc-900/75
+            dark:shadow-[0_0_30px_rgba(234,179,8,0.12)]
+            sm:p-6
+          "
+        >
+          <div className="flex flex-col gap-5">
+
+            {/* BROKER ACCUMULATION */}
+
+            <Link
+              href={links[0].url}
+              className="
+                group
+                relative
+                w-full
+                overflow-hidden
+                rounded-xl
+                border
+                border-yellow-500/25
+                bg-zinc-100
+                px-5
+                py-4
+                text-zinc-900
+                transition-all
+                duration-300
+                hover:scale-[1.02]
+                hover:border-yellow-400
+                hover:shadow-[0_0_20px_rgba(234,179,8,0.25)]
+                active:scale-[0.97]
+                dark:border-yellow-500/30
+                dark:bg-zinc-950/80
+                dark:text-white
+                dark:hover:border-yellow-300
+              "
+            >
+              <span
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-gradient-to-r
+                  from-yellow-500/10
+                  via-transparent
+                  to-yellow-400/10
+                  opacity-0
+                  transition-opacity
+                  duration-300
+                  group-hover:opacity-100
+                "
+              />
+
+              <div
+                className="
+                  relative
+                  z-10
+                  flex
+                  items-center
+                  justify-between
+                  gap-4
+                "
+              >
+                <div className="min-w-0">
+                  <h2
+                    className="
+                      text-base
+                      font-semibold
+                      tracking-wide
+                      transition-colors
+                      group-hover:text-yellow-600
+                      sm:text-lg
+                      dark:group-hover:text-yellow-300
+                    "
+                  >
+                    {links[0].title}
+                  </h2>
+
+                  <p
+                    className="
+                      mt-1
+                      text-xs
+                      leading-relaxed
+                      text-zinc-500
+                      sm:text-sm
+                      dark:text-zinc-400
+                    "
+                  >
+                    {links[0].description}
+                  </p>
+                </div>
+
+                <ArrowRight
+                  size={23}
+                  strokeWidth={2}
+                  className="
+                    shrink-0
+                    text-yellow-500
+                    transition-transform
+                    duration-300
+                    group-hover:translate-x-1
+                  "
+                />
+              </div>
+            </Link>
+
+            {/* BROKER MOVEMENT */}
+
+            <Link
+              href={links[1].url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="
+                group
+                relative
+                w-full
+                overflow-hidden
+                rounded-xl
+                border
+                border-yellow-500/25
+                bg-zinc-100
+                px-5
+                py-4
+                text-zinc-900
+                transition-all
+                duration-300
+                hover:scale-[1.02]
+                hover:border-yellow-400
+                hover:shadow-[0_0_20px_rgba(234,179,8,0.25)]
+                active:scale-[0.97]
+                dark:border-yellow-500/30
+                dark:bg-zinc-950/80
+                dark:text-white
+                dark:hover:border-yellow-300
+              "
+            >
+              <span
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-gradient-to-r
+                  from-yellow-500/10
+                  via-transparent
+                  to-yellow-400/10
+                  opacity-0
+                  transition-opacity
+                  duration-300
+                  group-hover:opacity-100
+                "
+              />
+
+              <div
+                className="
+                  relative
+                  z-10
+                  flex
+                  items-center
+                  justify-between
+                  gap-4
+                "
+              >
+                <div className="min-w-0">
+                  <h2
+                    className="
+                      text-base
+                      font-semibold
+                      tracking-wide
+                      transition-colors
+                      group-hover:text-yellow-600
+                      sm:text-lg
+                      dark:group-hover:text-yellow-300
+                    "
+                  >
+                    {links[1].title}
+                  </h2>
+
+                  <p
+                    className="
+                      mt-1
+                      text-xs
+                      leading-relaxed
+                      text-zinc-500
+                      sm:text-sm
+                      dark:text-zinc-400
+                    "
+                  >
+                    {links[1].description}
+                  </p>
+                </div>
+
+                <ArrowRight
+                  size={23}
+                  strokeWidth={2}
+                  className="
+                    shrink-0
+                    text-yellow-500
+                    transition-transform
+                    duration-300
+                    group-hover:translate-x-1
+                  "
+                />
+              </div>
+            </Link>
+          </div>
+        </main>
+
+        {/* =================================================
+            TRADE PLANE
+        ================================================== */}
+
+        <section
+          className="
+            relative
+            z-30
+            mt-5
+            w-full
+            overflow-visible
+            rounded-2xl
+            border
+            border-zinc-200
+            bg-white/90
+            p-5
+            shadow-xl
+            backdrop-blur-xl
+            dark:border-yellow-500/20
+            dark:bg-zinc-900/90
+            dark:shadow-[0_0_30px_rgba(234,179,8,0.12)]
+            sm:p-6
+          "
+        >
+
+          {/* =================================================
+              HEADER
+          ================================================== */}
+
+          <div
+            className="
+              flex
+              items-center
+              justify-between
+              gap-4
+            "
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div
+                  className="
+                    flex
+                    h-8
+                    w-8
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-lg
+                    bg-yellow-500/10
+                    text-yellow-500
+                  "
+                >
+                  <Radio
+                    size={17}
+                    strokeWidth={2}
+                  />
+                </div>
+
+                <h2
+                  className="
+                    text-base
+                    font-semibold
+                    text-zinc-900
+                    sm:text-lg
+                    dark:text-white
+                  "
+                >
+                  Trade Plane
+                </h2>
+              </div>
+
+              <p
+                className="
+                  mt-1.5
+                  text-xs
+                  text-zinc-500
+                  dark:text-zinc-400
+                "
+              >
+                Pilih broker dan konfigurasi
+                channel signal.
+              </p>
+            </div>
+
+            {/* SWITCH */}
+
+            <div
+              className="
+                flex
+                shrink-0
+                flex-col
+                items-end
+                gap-1
+              "
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={
+                  isTradePlaneOn
+                }
+                aria-label="Aktifkan Trade Plane"
+                onClick={
+                  handleTradePlaneToggle
+                }
+                className={`
+                  relative
+                  h-7
+                  w-12
+                  rounded-full
+                  transition-all
+                  duration-300
+                  ${
+                    isTradePlaneOn
+                      ? "bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.45)]"
+                      : "bg-zinc-800"
+                  }
+                `}
+              >
+                <span
+                  className={`
+                    absolute
+                    top-1
+                    h-5
+                    w-5
+                    rounded-full
+                    bg-white
+                    shadow-md
+                    transition-all
+                    duration-300
+                    ${
+                      isTradePlaneOn
+                        ? "left-6"
+                        : "left-1"
+                    }
+                  `}
+                />
+              </button>
+
+              <span
+                className={`
+                  text-[10px]
+                  font-medium
+                  ${
+                    isTradePlaneOn
+                      ? "text-green-500"
+                      : "text-zinc-500"
+                  }
+                `}
+              >
+                {isTradePlaneOn
+                  ? "ON"
+                  : "OFF"}
+              </span>
+            </div>
+          </div>
+
+          {/* =================================================
+              COLLAPSIBLE CONTENT
+          ================================================== */}
+
+          <div
+            className={`
+              grid
+              transition-[grid-template-rows,opacity,margin]
+              duration-500
+              ease-[cubic-bezier(0.22,1,0.36,1)]
+              ${
+                isTradePlaneOn
+                  ? "mt-5 grid-rows-[1fr] opacity-100"
+                  : "mt-0 grid-rows-[0fr] opacity-0"
+              }
+            `}
+          >
+            <div className="min-h-0 overflow-hidden">
+
+              {/* =================================================
+                  BROKER
+              ================================================== */}
+
+              <div
+                className="
+                  rounded-xl
+                  border
+                  border-yellow-500/20
+                  bg-zinc-50/80
+                  p-3
+                  dark:bg-zinc-950/50
+                "
+              >
+
+                <div className="mb-2.5 flex items-center justify-between">
+                  <div>
+                    <p
+                      className="
+                        text-xs
+                        font-semibold
+                        text-zinc-800
+                        dark:text-zinc-200
+                      "
+                    >
+                      Signal Broker
+                    </p>
+
+                    <p
+                      className="
+                        mt-0.5
+                        text-[10px]
+                        text-zinc-400
+                      "
+                    >
+                      Broker yang digunakan
+                      Trade Plane.
+                    </p>
+                  </div>
+
+                  {selectedBroker && (
+                    <span
+                      className="
+                        rounded-full
+                        border
+                        border-green-500/20
+                        bg-green-500/10
+                        px-2
+                        py-1
+                        text-[9px]
+                        font-medium
+                        text-green-500
+                      "
+                    >
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+
+                {/* DROPDOWN */}
+
+                <div
+                  ref={dropdownRef}
+                  className="relative z-50 w-full"
+                >
+                  <button
+                    type="button"
+                    disabled={
+                      isBrokerLoading ||
+                      brokers.length === 0
+                    }
+                    onClick={() =>
+                      setIsBrokerDropdownOpen(
+                        (previous) =>
+                          !previous
+                      )
+                    }
+                    className="
+                      flex
+                      w-full
+                      items-center
+                      justify-between
+                      gap-3
+                      rounded-xl
+                      border
+                      border-zinc-300
+                      bg-white
+                      px-3.5
+                      py-3
+                      text-left
+                      outline-none
+                      transition-all
+                      duration-200
+                      hover:border-yellow-500/70
+                      focus:border-yellow-500
+                      focus:ring-2
+                      focus:ring-yellow-500/10
+                      disabled:cursor-not-allowed
+                      disabled:opacity-50
+                      dark:border-zinc-700
+                      dark:bg-zinc-900
+                    "
+                  >
+                    {selectedBroker ? (
+                      <span
+                        className="
+                          flex
+                          min-w-0
+                          items-center
+                          gap-2.5
+                        "
+                      >
+                        <span
+                          className={`
+                            shrink-0
+                            text-sm
+                            font-bold
+                            tracking-wide
+                            ${
+                              selectedBroker.is_foreign
+                                ? "text-red-500"
+                                : "text-zinc-900 dark:text-zinc-100"
+                            }
+                          `}
+                        >
+                          {
+                            selectedBroker.broker_code
+                          }
+                        </span>
+
+                        <span
+                          className="
+                            truncate
+                            text-sm
+                            text-zinc-600
+                            dark:text-zinc-300
+                          "
+                        >
+                          {
+                            selectedBroker.broker_name
+                          }
+                        </span>
+                      </span>
+                    ) : (
+                      <span
+                        className="
+                          text-sm
+                          text-zinc-500
+                        "
+                      >
+                        {isBrokerLoading
+                          ? "Menyiapkan broker..."
+                          : "Pilih broker"}
+                      </span>
+                    )}
+
+                    <ChevronDown
+                      size={17}
+                      className={`
+                        shrink-0
+                        text-zinc-500
+                        transition-transform
+                        duration-200
+                        ${
+                          isBrokerDropdownOpen
+                            ? "rotate-180"
+                            : ""
+                        }
+                      `}
+                    />
+                  </button>
+
+                  {/* DROPDOWN LIST */}
+
+                  {isBrokerDropdownOpen &&
+                    brokers.length > 0 && (
+                      <div
+                        className="
+                          absolute
+                          left-0
+                          right-0
+                          top-full
+                          z-[9999]
+                          mt-2
+                          max-h-72
+                          overflow-y-auto
+                          overscroll-contain
+                          rounded-xl
+                          border
+                          border-zinc-200
+                          bg-white
+                          p-1.5
+                          shadow-[0_20px_50px_rgba(0,0,0,0.25)]
+                          dark:border-zinc-700
+                          dark:bg-zinc-900
+                          dark:shadow-[0_20px_50px_rgba(0,0,0,0.5)]
+                        "
+                      >
+                        {brokers.map(
+                          (broker) => {
+                            const isSelected =
+                              broker.broker_code ===
+                              selectedBrokerCode;
+
+                            return (
+                              <button
+                                key={`${broker.broker_code}-${broker.broker_id}`}
+                                type="button"
+                                onClick={() =>
+                                  handleBrokerSelect(
+                                    broker
+                                  )
+                                }
+                                className={`
+                                  flex
+                                  w-full
+                                  items-center
+                                  justify-between
+                                  gap-3
+                                  rounded-lg
+                                  px-3
+                                  py-2.5
+                                  text-left
+                                  transition-all
+                                  duration-150
+                                  ${
+                                    isSelected
+                                      ? "bg-yellow-500/10"
+                                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                                  }
+                                `}
+                              >
+                                <span
+                                  className="
+                                    flex
+                                    min-w-0
+                                    items-center
+                                    gap-2.5
+                                  "
+                                >
+                                  <span
+                                    className={`
+                                      shrink-0
+                                      text-sm
+                                      font-bold
+                                      tracking-wide
+                                      ${
+                                        broker.is_foreign
+                                          ? "text-red-500"
+                                          : "text-zinc-900 dark:text-zinc-100"
+                                      }
+                                    `}
+                                  >
+                                    {
+                                      broker.broker_code
+                                    }
+                                  </span>
+
+                                  <span
+                                    className="
+                                      truncate
+                                      text-xs
+                                      text-zinc-600
+                                      dark:text-zinc-400
+                                    "
+                                  >
+                                    {
+                                      broker.broker_name
+                                    }
+                                  </span>
+                                </span>
+
+                                <span
+                                  className="
+                                    flex
+                                    shrink-0
+                                    items-center
+                                    gap-2
+                                  "
+                                >
+                                  <span
+                                    className="
+                                      text-[9px]
+                                      text-zinc-400
+                                    "
+                                  >
+                                    ID{" "}
+                                    {
+                                      broker.broker_id ??
+                                      "-"
+                                    }
+                                  </span>
+
+                                  {isSelected && (
+                                    <Check
+                                      size={14}
+                                      className="
+                                        text-green-500
+                                      "
+                                    />
+                                  )}
+                                </span>
+                              </button>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+                </div>
+
+                {/* BROKER INFO */}
+
+                {selectedBroker && (
+                  <div
+                    className="
+                      mt-2
+                      flex
+                      items-center
+                      gap-2
+                      text-[10px]
+                      text-zinc-400
+                    "
+                  >
+                    <span>
+                      Broker ID:{" "}
+                      {
+                        selectedBroker.broker_id ??
+                        "-"
+                      }
+                    </span>
+
+                    {selectedBroker.is_foreign && (
+                      <>
+                        <span>•</span>
+
+                        <span className="text-red-500">
+                          Foreign
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* =================================================
+                  SIGNAL URL
+              ================================================== */}
+
+              <div
+                className="
+                  mt-3
+                  rounded-xl
+                  border
+                  border-zinc-200
+                  bg-zinc-50/70
+                  p-3
+                  dark:border-zinc-800
+                  dark:bg-zinc-950/40
+                "
+              >
+                <div className="mb-2.5 flex items-center gap-2">
+                  <div
+                    className="
+                      flex
+                      h-7
+                      w-7
+                      items-center
+                      justify-center
+                      rounded-lg
+                      bg-yellow-500/10
+                      text-yellow-500
+                    "
+                  >
+                    <Link2 size={14} />
+                  </div>
+
+                  <div>
+                    <p
+                      className="
+                        text-xs
+                        font-semibold
+                        text-zinc-800
+                        dark:text-zinc-200
+                      "
+                    >
+                      Signal URL
+                    </p>
+
+                    <p
+                      className="
+                        text-[10px]
+                        text-zinc-400
+                      "
+                    >
+                      Endpoint tujuan pengiriman
+                      signal.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="url"
+                    value={signalUrl}
+                    onChange={(event) =>
+                      handleSignalUrlChange(
+                        event.target.value
+                      )
+                    }
+                    placeholder="https://..."
+                    className="
+                      w-full
+                      rounded-xl
+                      border
+                      border-zinc-300
+                      bg-white
+                      px-3.5
+                      py-3
+                      pr-10
+                      text-sm
+                      text-zinc-900
+                      outline-none
+                      transition-all
+                      placeholder:text-zinc-400
+                      focus:border-yellow-500
+                      focus:ring-2
+                      focus:ring-yellow-500/10
+                      dark:border-zinc-700
+                      dark:bg-zinc-900
+                      dark:text-white
+                    "
+                  />
+
+                  <ExternalLink
+                    size={15}
+                    className="
+                      pointer-events-none
+                      absolute
+                      right-3.5
+                      top-1/2
+                      -translate-y-1/2
+                      text-zinc-500
+                    "
+                  />
+                </div>
+
+                <p
+                  className="
+                    mt-2
+                    text-[9px]
+                    leading-relaxed
+                    text-zinc-400
+                  "
+                >
+                  Masukkan endpoint webhook
+                  yang nantinya menerima payload
+                  signal dari Trade Plane.
+                </p>
+              </div>
+
+              {/* =================================================
+                  SAVE BUTTON
+              ================================================== */}
+
+              <button
+                type="button"
+                onClick={
+                  handleSaveTradePlane
+                }
+                disabled={
+                  saveStatus ===
+                  "saving"
+                }
+                className="
+                  mt-3
+                  flex
+                  w-full
+                  items-center
+                  justify-center
+                  gap-2
+                  rounded-xl
+                  bg-yellow-500
+                  px-4
+                  py-3
+                  text-sm
+                  font-semibold
+                  text-zinc-950
+                  shadow-[0_8px_25px_rgba(234,179,8,0.18)]
+                  transition-all
+                  duration-200
+                  hover:bg-yellow-400
+                  hover:shadow-[0_10px_30px_rgba(234,179,8,0.25)]
+                  active:scale-[0.98]
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+                "
+              >
+                {saveStatus ===
+                "saving" ? (
+                  <>
+                    <Loader2
+                      size={16}
+                      className="animate-spin"
+                    />
+
+                    Menyimpan...
+                  </>
+                ) : saveStatus ===
+                  "success" ? (
+                  <>
+                    <Check
+                      size={16}
+                    />
+
+                    Tersimpan
+                  </>
+                ) : (
+                  <>
+                    <Check
+                      size={16}
+                    />
+
+                    Simpan Konfigurasi
+                  </>
+                )}
+              </button>
+
+              {/* =================================================
+                  SAVE STATUS
+              ================================================== */}
+
+              <div
+                className={`
+                  grid
+                  transition-all
+                  duration-300
+                  ${
+                    saveStatus ===
+                    "idle"
+                      ? "grid-rows-[0fr] opacity-0"
+                      : "mt-2 grid-rows-[1fr] opacity-100"
+                  }
+                `}
+              >
+                <div className="min-h-0 overflow-hidden">
+                  {saveStatus ===
+                    "success" && (
+                    <div
+                      className="
+                        flex
+                        items-center
+                        justify-center
+                        gap-2
+                        rounded-lg
+                        border
+                        border-green-500/15
+                        bg-green-500/5
+                        px-3
+                        py-2
+                        text-[10px]
+                        text-green-500
+                      "
+                    >
+                      <Check
+                        size={13}
+                      />
+
+                      Konfigurasi berhasil
+                      disimpan ke server.
+                    </div>
+                  )}
+
+                  {saveStatus ===
+                    "error" && (
+                    <div
+                      className="
+                        rounded-lg
+                        border
+                        border-red-500/15
+                        bg-red-500/5
+                        px-3
+                        py-2
+                        text-center
+                        text-[10px]
+                        leading-relaxed
+                        text-red-500
+                      "
+                    >
+                      Gagal menyimpan
+                      konfigurasi. Pastikan
+                      broker sudah dipilih dan
+                      API server tersedia.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* =================================================
+                  ACTIVE STATUS
+              ================================================== */}
+
+              <div
+                className="
+                  mt-3
+                  flex
+                  items-center
+                  gap-2
+                  rounded-xl
+                  border
+                  border-green-500/15
+                  bg-green-500/5
+                  px-3
+                  py-2.5
+                "
+              >
+                <span
+                  className="
+                    h-1.5
+                    w-1.5
+                    rounded-full
+                    bg-green-500
+                    shadow-[0_0_8px_rgba(34,197,94,0.7)]
+                  "
+                />
+
+                <span
+                  className="
+                    text-[10px]
+                    text-green-600
+                    dark:text-green-400
+                  "
+                >
+                  Trade Plane aktif
+                  {selectedBroker
+                    ? ` • ${selectedBroker.broker_code}`
+                    : ""}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* =================================================
+              NOTES
+          ================================================== */}
+
+          <div
+            className="
+              relative
+              mt-5
+              w-full
+              overflow-hidden
+              rounded-xl
+              border
+              border-yellow-500/20
+              bg-zinc-100/60
+              px-4
+              py-3
+              text-xs
+              dark:bg-zinc-950/50
+            "
+          >
+            <div
+              className="
+                border-l-2
+                border-yellow-500
+                pl-3
+              "
+            >
+              <div
+                className="
+                  mb-2
+                  font-medium
+                  text-yellow-600
+                  dark:text-yellow-500
+                "
+              >
+                Notes
+              </div>
+
+              <ul
+                className="
+                  space-y-1.5
+                  text-zinc-600
+                  dark:text-zinc-400
+                "
+              >
+                {notes.map(
+                  (note) => (
+                    <li
+                      key={note.id}
+                      className="
+                        flex
+                        items-start
+                        gap-2
+                        leading-relaxed
+                      "
+                    >
+                      <span
+                        className="
+                          mt-[6px]
+                          h-1
+                          w-1
+                          shrink-0
+                          rounded-full
+                          bg-zinc-400
+                          dark:bg-zinc-600
+                        "
+                      />
+
+                      <span>
+                        {note.note}
+                      </span>
+                    </li>
+                  )
+                )}
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        {/* =================================================
+            INFINITE SLIDER
+        ================================================== */}
+
+        <div
+          className="
+            relative
+            z-10
+            mt-5
+            flex
+            w-full
+            flex-col
+            gap-2
+            px-2
+            pt-5
+          "
+        >
+          <h2
+            className="
+              text-lg
+              font-medium
+              italic
+              text-yellow-400
+            "
+          >
+            Penting Mann !
+          </h2>
+
+          <InfiniteMarqueeSlider />
+        </div>
+      </div>
+    </div>
+  );
+}

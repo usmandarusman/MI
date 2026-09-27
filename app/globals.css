@@ -11,7 +11,27 @@
   --background: #0a0a0a;
   --foreground: #ededed;
 }
+/* =========================================================
+   TRADE PLANE NOTE MARQUEE
+========================================================= */
 
+@keyframes trade-plane-marquee {
+  0% {
+    transform: translateX(100%);
+  }
+
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.trade-plane-marquee {
+  display: inline-flex;
+  width: max-content;
+  white-space: nowrap;
+  animation: trade-plane-marquee 28s linear infinite;
+  will-change: transform;
+}
 /* ================================
    BROKER POPUP ANIMATIONS
 ================================ */
@@ -101,7 +121,6 @@
     animation-duration: 1ms;
   }
 }
-
 
 @theme inline {
   --color-background: var(--background);

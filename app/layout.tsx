@@ -7,6 +7,7 @@ import { ThemeProvider } from "next-themes";
 import Navigasi from "./components/items/navigator";
 import Footer from "./components/items/footer";
 import ServiceWorkerRegister from "./components/pwa/service-worker-register";
+import { AuthProvider } from "./components/auth/AuthProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -47,26 +48,30 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
-      <body className="flex min-h-screen flex-col">
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          enableSystem={false}
-        >
-          {/* PWA SERVICE WORKER */}
-          <ServiceWorkerRegister />
+      <body className="h-screen overflow-hidden">
+        <AuthProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="dark"
+            enableSystem={false}
+            >
+            <div className="flex h-screen flex-col overflow-hidden">
+              <div className="shrink-0">
+                <Navigasi />
+              </div>
 
-          {/* NAVIGASI */}
-          <Navigasi />
+              <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+                {children}
+              </main>
 
-          {/* MAIN */}
-          <main className="relative h-[86vh] w-full">
-            {children}
-          </main>
+              <div className="shrink-0">
+                <Footer />
+              </div>
+            </div>
 
-          {/* FOOTER */}
-          <Footer />
-        </ThemeProvider>
+            <ServiceWorkerRegister />
+          </ThemeProvider>
+          </AuthProvider>
       </body>
     </html>
   );

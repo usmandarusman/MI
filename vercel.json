@@ -15,6 +15,10 @@
     {
       "path": "/api/admin/sync-stocks",
       "schedule": "30 13 * * 1-5"
+    },
+    {
+      "path": "/api/admin/sync-signal",
+      "schedule": "0 12 * * 6"
     }
   ]
 }
