@@ -189,10 +189,6 @@ function normalizeBrokers(
               brokerCode
           ).trim();
 
-        /* -----------------------------------------
-           FOREIGN
-        ----------------------------------------- */
-
         const rawForeign =
           row.is_foreign;
 
@@ -215,10 +211,6 @@ function normalizeBrokers(
         ) {
           isForeign = false;
         }
-
-        /* -----------------------------------------
-           BROKER ID
-        ----------------------------------------- */
 
         let brokerId:
           | number
@@ -303,10 +295,7 @@ function getCachedBrokers(): BrokerOption[] {
     const parsed =
       JSON.parse(cached);
 
-    const normalized =
-      normalizeBrokers(parsed);
-
-    return normalized;
+    return normalizeBrokers(parsed);
   } catch (error) {
     console.error(
       "[Trade Plane] Broker cache error:",
@@ -337,25 +326,33 @@ export default function Home() {
   ] = useState(false);
 
   /*
-   * TRUE ketika user klik save
-   * dalam kondisi belum login.
-   *
-   * Setelah login berhasil,
-   * konfigurasi otomatis disimpan.
+   * Popup ketika user ingin mematikan
+   * Trade Plane.
    */
   const [
-    pendingSaveAfterLogin,
-    setPendingSaveAfterLogin,
+    showDisableConfirm,
+    setShowDisableConfirm,
   ] = useState(false);
 
   /*
-   * Menyimpan user sebelumnya.
+   * Menyimpan action setelah login.
    *
-   * Dipakai untuk mendeteksi perubahan:
+   * Hanya digunakan untuk:
    *
-   * sebelumnya login
-   *        ↓
-   * sekarang logout
+   * OFF -> ON -> belum login
+   *
+   * Setelah login, switch otomatis
+   * diaktifkan.
+   */
+  const [
+    pendingEnableAfterLogin,
+    setPendingEnableAfterLogin,
+  ] = useState(false);
+
+  /*
+   * User sebelumnya.
+   *
+   * Digunakan untuk mendeteksi logout.
    */
   const previousUserRef =
     useRef<typeof user>(null);
@@ -426,6 +423,15 @@ export default function Home() {
     setIsTradePlaneLoading,
   ] = useState(false);
 
+  /*
+   * Mencegah klik switch berulang
+   * ketika sedang PUT.
+   */
+  const [
+    isToggleSaving,
+    setIsToggleSaving,
+  ] = useState(false);
+
   /* =======================================================
      BROKER DROPDOWN
   ======================================================= */
@@ -440,33 +446,14 @@ export default function Home() {
 
   /* =======================================================
      LOAD BROKERS
-
-     ALUR:
-
-     1. Cek localStorage
-     2. Kalau ada dan valid -> gunakan cache
-     3. Kalau tidak ada -> fetch API
-     4. Simpan hasil fetch ke localStorage
-======================================================= */
+  ======================================================= */
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadBrokers() {
-      /*
-       * -----------------------------------------------------
-       * STEP 1
-       * Cek localStorage terlebih dahulu.
-       * -----------------------------------------------------
-       */
-
       const cached =
         getCachedBrokers();
-
-      /*
-       * Kalau cache ADA dan berisi data,
-       * JANGAN FETCH API LAGI.
-       */
 
       if (cached.length > 0) {
         if (!cancelled) {
@@ -481,22 +468,10 @@ export default function Home() {
         return;
       }
 
-      /*
-       * -----------------------------------------------------
-       * STEP 2
-       * Cache tidak ada / kosong.
-       * Baru fetch API.
-       * -----------------------------------------------------
-       */
-
       try {
         if (!cancelled) {
           setIsBrokerLoading(true);
         }
-
-        console.log(
-          "[Trade Plane] Broker cache kosong. Fetching /api/brokers..."
-        );
 
         const response =
           await fetch(
@@ -517,13 +492,6 @@ export default function Home() {
           );
         }
 
-        /*
-         * -----------------------------------------------------
-         * STEP 3
-         * Normalisasi response API.
-         * -----------------------------------------------------
-         */
-
         const fetchedBrokers =
           normalizeBrokers(data);
 
@@ -539,23 +507,9 @@ export default function Home() {
           return;
         }
 
-        /*
-         * -----------------------------------------------------
-         * STEP 4
-         * Simpan ke state.
-         * -----------------------------------------------------
-         */
-
         setBrokers(
           fetchedBrokers
         );
-
-        /*
-         * -----------------------------------------------------
-         * STEP 5
-         * Simpan hasil fetch ke localStorage.
-         * -----------------------------------------------------
-         */
 
         try {
           localStorage.setItem(
@@ -563,10 +517,6 @@ export default function Home() {
             JSON.stringify(
               fetchedBrokers
             )
-          );
-
-          console.log(
-            `[Trade Plane] Broker fetched & cached: ${fetchedBrokers.length}`
           );
         } catch (storageError) {
           console.error(
@@ -610,8 +560,6 @@ export default function Home() {
 
   /* =======================================================
      LOAD SAVED TRADE PLANE
-
-     HANYA USER LOGIN
   ======================================================= */
 
   useEffect(() => {
@@ -621,29 +569,21 @@ export default function Home() {
       /*
        * Belum login.
        *
-       * Jangan reset draft di sini.
+       * Jangan menghapus draft UI.
        */
       if (!user) {
-        setIsTradePlaneLoading(
-          false
-        );
-
+        setIsTradePlaneLoading(false);
         return;
       }
 
       /*
-       * Kalau baru selesai login karena
-       * sedang menunggu save, jangan ambil
-       * config server terlebih dahulu.
+       * Kalau user baru saja login
+       * karena meminta OFF -> ON,
+       * konfigurasi server tetap perlu
+       * dimuat terlebih dahulu.
        */
-      if (pendingSaveAfterLogin) {
-        return;
-      }
-
       try {
-        setIsTradePlaneLoading(
-          true
-        );
+        setIsTradePlaneLoading(true);
 
         const idToken =
           await user.getIdToken();
@@ -654,7 +594,8 @@ export default function Home() {
             {
               method: "GET",
               headers: {
-                Authorization: `Bearer ${idToken}`,
+                Authorization:
+                  `Bearer ${idToken}`,
               },
               cache: "no-store",
             }
@@ -680,11 +621,16 @@ export default function Home() {
 
         /*
          * ENABLED
+         *
+         * Jika sedang menunggu enable
+         * setelah login, jangan menimpa
+         * state dengan false sebelum PUT.
          */
-
-        setIsTradePlaneOn(
-          config.enabled === true
-        );
+        if (!pendingEnableAfterLogin) {
+          setIsTradePlaneOn(
+            config.enabled === true
+          );
+        }
 
         /*
          * BROKER
@@ -734,9 +680,7 @@ export default function Home() {
         }
       } finally {
         if (!cancelled) {
-          setIsTradePlaneLoading(
-            false
-          );
+          setIsTradePlaneLoading(false);
         }
       }
     }
@@ -748,32 +692,18 @@ export default function Home() {
     };
   }, [
     user,
-    pendingSaveAfterLogin,
+    pendingEnableAfterLogin,
   ]);
 
   /* =======================================================
-     RESET UI SAAT LOGOUT
-     
-     PENTING:
-     HANYA STATE UI YANG DIHAPUS.
-     
-     FIRESTORE TIDAK DIHAPUS.
-======================================================= */
+     LOGOUT DETECTION
+  ======================================================= */
 
   useEffect(() => {
-    /*
-     * Tunggu Firebase selesai menentukan
-     * status authentication.
-     */
     if (authLoading) {
       return;
     }
 
-    /*
-     * Kalau sebelumnya ada user lalu sekarang
-     * user menjadi null, berarti user baru saja
-     * logout.
-     */
     if (
       previousUserRef.current &&
       !user
@@ -782,53 +712,29 @@ export default function Home() {
         "[Trade Plane] User logout. Reset UI state."
       );
 
-      /*
-       * Reset Trade Plane
-       */
       setIsTradePlaneOn(false);
 
-      /*
-       * Reset broker
-       */
       setSelectedBrokerCode("");
       setSelectedBrokerId(null);
 
-      /*
-       * Reset destination
-       */
       setDestinationType("telegram");
       setDestinationTarget("");
 
-      /*
-       * Reset status
-       */
       setSaveStatus("idle");
 
-      /*
-       * Reset loading
-       */
       setIsTradePlaneLoading(false);
+      setIsToggleSaving(false);
 
-      /*
-       * Tutup dropdown
-       */
       setIsBrokerDropdownOpen(false);
 
-      /*
-       * Bersihkan pending login/save
-       */
-      setPendingSaveAfterLogin(false);
+      setPendingEnableAfterLogin(
+        false
+      );
 
-      /*
-       * Tutup login modal jika masih terbuka
-       */
       setShowLogin(false);
+      setShowDisableConfirm(false);
     }
 
-    /*
-     * Simpan user saat ini untuk dibandingkan
-     * dengan authentication state berikutnya.
-     */
     previousUserRef.current = user;
   }, [
     user,
@@ -836,30 +742,36 @@ export default function Home() {
   ]);
 
   /* =======================================================
-     SAVE AFTER LOGIN
+     ENABLE AFTER LOGIN
   ======================================================= */
 
   useEffect(() => {
     if (
       !user ||
-      !pendingSaveAfterLogin
+      !pendingEnableAfterLogin
     ) {
       return;
     }
 
+    /*
+     * Login berhasil.
+     *
+     * Sekarang baru benar-benar
+     * aktifkan Trade Plane ke DB.
+     */
+
     setShowLogin(false);
 
-    setPendingSaveAfterLogin(
+    setPendingEnableAfterLogin(
       false
     );
 
-    void saveTradePlaneWithUser(
-      user,
-      true
+    void enableTradePlane(
+      user
     );
   }, [
     user,
-    pendingSaveAfterLogin,
+    pendingEnableAfterLogin,
   ]);
 
   /* =======================================================
@@ -896,42 +808,334 @@ export default function Home() {
   }, []);
 
   /* =======================================================
+     ENABLE TRADE PLANE
+  ======================================================= */
+
+  async function enableTradePlane(
+    currentUser: NonNullable<
+      typeof user
+    >
+  ) {
+    if (isToggleSaving) {
+      return;
+    }
+
+    setIsToggleSaving(true);
+    setSaveStatus("saving");
+
+    try {
+      const idToken =
+        await currentUser.getIdToken();
+
+      /*
+       * PENTING:
+       *
+       * Saat ON:
+       * broker + destination yang sudah
+       * tersimpan tetap dikirim.
+       *
+       * Jadi enabled:true tidak
+       * menghapus konfigurasi lama.
+       */
+      const config: TradePlaneConfig =
+        {
+          enabled: true,
+
+          broker_code:
+            selectedBrokerCode,
+
+          broker_id:
+            selectedBrokerId,
+
+          broker_name:
+            selectedBroker
+              ?.broker_name ?? "",
+
+          destination_type:
+            destinationType,
+
+          destination_target:
+            destinationTarget.trim(),
+        };
+
+      const response =
+        await fetch(
+          "/api/trade-plane",
+          {
+            method: "PUT",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+
+              Authorization:
+                `Bearer ${idToken}`,
+            },
+
+            body: JSON.stringify(
+              config
+            ),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ??
+            "Gagal mengaktifkan Trade Plane."
+        );
+      }
+
+      const savedConfig =
+        data?.config ?? config;
+
+      setIsTradePlaneOn(
+        savedConfig.enabled === true
+      );
+
+      setSelectedBrokerCode(
+        String(
+          savedConfig.broker_code ??
+            ""
+        )
+          .trim()
+          .toUpperCase()
+      );
+
+      setSelectedBrokerId(
+        typeof savedConfig.broker_id ===
+          "number"
+          ? savedConfig.broker_id
+          : null
+      );
+
+      setDestinationType(
+        savedConfig.destination_type ===
+          "whatsapp"
+          ? "whatsapp"
+          : "telegram"
+      );
+
+      setDestinationTarget(
+        String(
+          savedConfig.destination_target ??
+            ""
+        ).trim()
+      );
+
+      setSaveStatus("success");
+    } catch (error) {
+      console.error(
+        "[Trade Plane] Enable error:",
+        error
+      );
+
+      /*
+       * Kalau gagal enable,
+       * switch harus kembali OFF.
+       */
+      setIsTradePlaneOn(false);
+
+      setSaveStatus("error");
+    } finally {
+      setIsToggleSaving(false);
+    }
+  }
+
+  /* =======================================================
+     DISABLE TRADE PLANE
+  ======================================================= */
+
+  async function disableTradePlane() {
+    if (!user || isToggleSaving) {
+      return;
+    }
+
+    setIsToggleSaving(true);
+    setSaveStatus("saving");
+
+    try {
+      const idToken =
+        await user.getIdToken();
+
+      /*
+       * PENTING:
+       *
+       * Hanya enabled:false.
+       *
+       * Broker + destination TIDAK dihapus.
+       */
+      const response =
+        await fetch(
+          "/api/trade-plane",
+          {
+            method: "PUT",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+
+              Authorization:
+                `Bearer ${idToken}`,
+            },
+
+            body: JSON.stringify({
+              enabled: false,
+            }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ??
+            "Gagal mematikan Trade Plane."
+        );
+      }
+
+      const savedConfig =
+        data?.config;
+
+      /*
+       * Server berhasil.
+       */
+      setIsTradePlaneOn(false);
+
+      /*
+       * Jangan hapus broker/destination.
+       *
+       * Kalau API mengembalikan config,
+       * sinkronkan juga data tersebut.
+       */
+      if (savedConfig) {
+        setSelectedBrokerCode(
+          String(
+            savedConfig.broker_code ??
+              selectedBrokerCode
+          )
+            .trim()
+            .toUpperCase()
+        );
+
+        setSelectedBrokerId(
+          typeof savedConfig.broker_id ===
+            "number"
+            ? savedConfig.broker_id
+            : selectedBrokerId
+        );
+
+        setDestinationType(
+          savedConfig.destination_type ===
+            "whatsapp"
+            ? "whatsapp"
+            : destinationType
+        );
+
+        setDestinationTarget(
+          String(
+            savedConfig.destination_target ??
+              destinationTarget
+          ).trim()
+        );
+      }
+
+      setSaveStatus("success");
+    } catch (error) {
+      console.error(
+        "[Trade Plane] Disable error:",
+        error
+      );
+
+      /*
+       * Gagal OFF -> tetap ON.
+       */
+      setIsTradePlaneOn(true);
+
+      setSaveStatus("error");
+    } finally {
+      setIsToggleSaving(false);
+    }
+  }
+
+  /* =======================================================
      TOGGLE TRADE PLANE
   ======================================================= */
 
   const handleTradePlaneToggle =
-    async () => {
-      const nextState =
-        !isTradePlaneOn;
+    () => {
+      /*
+       * Jangan izinkan toggle ketika
+       * authentication masih diperiksa.
+       */
+      if (
+        authLoading ||
+        isTradePlaneLoading ||
+        isToggleSaving
+      ) {
+        return;
+      }
 
-      setIsTradePlaneOn(
-        nextState
-      );
+      /* =================================================
+         ON -> OFF
+         
+         Tampilkan popup.
+      ================================================= */
 
-      setSaveStatus("idle");
+      if (isTradePlaneOn) {
+        setShowDisableConfirm(true);
+        return;
+      }
+
+      /* =================================================
+         OFF -> ON
+      ================================================= */
 
       /*
-       * Kalau OFF:
-       * tutup broker dropdown.
+       * Belum login.
+       *
+       * Jangan ON dulu.
+       * Minta login.
        */
-      if (!nextState) {
-        setIsBrokerDropdownOpen(
-          false
+      if (!user) {
+        setPendingEnableAfterLogin(
+          true
         );
 
-        /*
-         * Kalau sudah login,
-         * langsung simpan status OFF
-         * ke Firestore.
-         */
-        if (user) {
-          await saveTradePlaneWithUser(
-            user,
-            false
-          );
-        }
+        setShowLogin(true);
+
+        return;
       }
+
+      /*
+       * Sudah login.
+       *
+       * Langsung enable:true ke DB.
+       */
+      void enableTradePlane(user);
     };
+
+  /* =======================================================
+     CONFIRM DISABLE
+  ======================================================= */
+
+  const handleConfirmDisable =
+    async () => {
+      setShowDisableConfirm(false);
+
+      await disableTradePlane();
+    };
+
+  /* =======================================================
+     CANCEL DISABLE
+  ======================================================= */
+
+  const handleCancelDisable = () => {
+    setShowDisableConfirm(false);
+  };
 
   /* =======================================================
      SELECT BROKER
@@ -977,14 +1181,76 @@ export default function Home() {
     };
 
   /* =======================================================
-     SAVE TO FIREBASE
+     SAVE CONFIGURATION
+     
+     TIDAK ADA LOGIN CHECK DI SINI.
+     
+     Karena tombol Save hanya boleh
+     digunakan ketika Trade Plane ON,
+     dan ON sudah memastikan user login.
+  ======================================================= */
+
+  const handleSaveTradePlane =
+    async () => {
+      /*
+       * ON harus login.
+       */
+      if (!user) {
+        /*
+         * Ini hanya fallback safety.
+         *
+         * Normalnya tidak akan pernah
+         * terjadi karena switch ON
+         * sudah membutuhkan login.
+         */
+        setIsTradePlaneOn(false);
+        setPendingEnableAfterLogin(
+          true
+        );
+        setShowLogin(true);
+        return;
+      }
+
+      /*
+       * Broker wajib.
+       */
+      if (
+        !selectedBroker ||
+        selectedBrokerId === null
+      ) {
+        setSaveStatus("error");
+        return;
+      }
+
+      /*
+       * Destination wajib.
+       */
+      if (
+        !destinationTarget.trim()
+      ) {
+        setSaveStatus("error");
+        return;
+      }
+
+      /*
+       * Simpan konfigurasi.
+       *
+       * enabled tetap TRUE karena
+       * switch sedang ON.
+       */
+      await saveTradePlaneWithUser(
+        user
+      );
+    };
+
+  /* =======================================================
+     SAVE CONFIGURATION TO SERVER
   ======================================================= */
 
   async function saveTradePlaneWithUser(
     currentUser: NonNullable<
       typeof user
-    >,
-    enabledOverride?: boolean
+    >
   ) {
     setSaveStatus("saving");
 
@@ -992,35 +1258,25 @@ export default function Home() {
       const idToken =
         await currentUser.getIdToken();
 
-      const enabled =
-        enabledOverride ??
-        isTradePlaneOn;
-
       const config: TradePlaneConfig =
         {
-          enabled,
+          enabled: true,
 
-          broker_code: enabled
-            ? selectedBrokerCode
-            : "",
+          broker_code:
+            selectedBrokerCode,
 
-          broker_id: enabled
-            ? selectedBrokerId
-            : null,
+          broker_id:
+            selectedBrokerId,
 
-          broker_name: enabled
-            ? selectedBroker
-                ?.broker_name ?? ""
-            : "",
+          broker_name:
+            selectedBroker
+              ?.broker_name ?? "",
 
-          destination_type: enabled
-            ? destinationType
-            : "telegram",
+          destination_type:
+            destinationType,
 
           destination_target:
-            enabled
-              ? destinationTarget.trim()
-              : "",
+            destinationTarget.trim(),
         };
 
       const response =
@@ -1055,10 +1311,6 @@ export default function Home() {
 
       const savedConfig =
         data?.config ?? config;
-
-      /*
-       * Sync kembali state dari server.
-       */
 
       setIsTradePlaneOn(
         savedConfig.enabled === true
@@ -1106,55 +1358,6 @@ export default function Home() {
   }
 
   /* =======================================================
-     SAVE BUTTON
-  ======================================================= */
-
-  const handleSaveTradePlane =
-    async () => {
-      /*
-       * Hanya dipanggil ketika ON.
-       */
-
-      if (
-        !selectedBroker ||
-        selectedBrokerId === null
-      ) {
-        setSaveStatus("error");
-        return;
-      }
-
-      if (
-        !destinationTarget.trim()
-      ) {
-        setSaveStatus("error");
-        return;
-      }
-
-      /*
-       * Belum login.
-       */
-
-      if (!user) {
-        setPendingSaveAfterLogin(
-          true
-        );
-
-        setShowLogin(true);
-
-        return;
-      }
-
-      /*
-       * Sudah login.
-       */
-
-      await saveTradePlaneWithUser(
-        user,
-        true
-      );
-    };
-
-  /* =======================================================
      RENDER
   ======================================================= */
 
@@ -1166,7 +1369,6 @@ export default function Home() {
         px-4
         py-6
         dark:bg-zinc-950
-        
       "
     >
       {/* =================================================
@@ -1190,11 +1392,212 @@ export default function Home() {
           <LoginRequired
             onClose={() => {
               setShowLogin(false);
-              setPendingSaveAfterLogin(
+
+              /*
+               * Kalau login dibatalkan,
+               * batalkan juga pending ON.
+               */
+              setPendingEnableAfterLogin(
                 false
               );
             }}
           />
+        </div>
+      )}
+
+      {/* =================================================
+          DISABLE CONFIRMATION
+      ================================================= */}
+
+      {showDisableConfirm && (
+        <div
+          className="
+            fixed
+            inset-0
+            z-[10000]
+            flex
+            items-center
+            justify-center
+            bg-black/70
+            p-4
+            backdrop-blur-sm
+          "
+        >
+          <div
+            className="
+              w-full
+              max-w-sm
+              overflow-hidden
+              rounded-2xl
+              border
+              border-zinc-200
+              bg-white
+              shadow-2xl
+              dark:border-yellow-500/20
+              dark:bg-zinc-900
+            "
+          >
+            <div
+              className="
+                border-b
+                border-zinc-200
+                px-5
+                py-4
+                dark:border-zinc-800
+              "
+            >
+              <div
+                className="
+                  flex
+                  items-center
+                  gap-3
+                "
+              >
+                <div
+                  className="
+                    flex
+                    h-10
+                    w-10
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-xl
+                    bg-red-500/10
+                    text-red-500
+                  "
+                >
+                  <Radio size={19} />
+                </div>
+
+                <div>
+                  <h3
+                    className="
+                      text-sm
+                      font-semibold
+                      text-zinc-900
+                      dark:text-white
+                    "
+                  >
+                    Matikan Trade Plane?
+                  </h3>
+
+                  <p
+                    className="
+                      mt-0.5
+                      text-[10px]
+                      text-zinc-500
+                      dark:text-zinc-400
+                    "
+                  >
+                    Pastikan kamu ingin menonaktifkan
+                    fitur ini.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-4">
+              <p
+                className="
+                  text-xs
+                  leading-relaxed
+                  text-zinc-500
+                  dark:text-zinc-400
+                "
+              >
+                Trade Plane akan dimatikan.
+                Konfigurasi broker dan
+                destination tetap tersimpan
+                sehingga dapat digunakan
+                kembali saat fitur diaktifkan.
+              </p>
+            </div>
+
+            <div
+              className="
+                flex
+                gap-2
+                border-t
+                border-zinc-200
+                bg-zinc-50/70
+                px-5
+                py-4
+                dark:border-zinc-800
+                dark:bg-zinc-950/40
+              "
+            >
+              <button
+                type="button"
+                onClick={
+                  handleCancelDisable
+                }
+                className="
+                  flex-1
+                  rounded-xl
+                  border
+                  border-zinc-200
+                  bg-white
+                  px-4
+                  py-2.5
+                  text-xs
+                  font-semibold
+                  text-zinc-700
+                  transition-all
+                  hover:bg-zinc-100
+                  dark:border-zinc-700
+                  dark:bg-zinc-900
+                  dark:text-zinc-300
+                  dark:hover:bg-zinc-800
+                "
+              >
+                Batal
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  handleConfirmDisable
+                }
+                disabled={
+                  isToggleSaving
+                }
+                className="
+                  flex-1
+                  rounded-xl
+                  bg-red-500
+                  px-4
+                  py-2.5
+                  text-xs
+                  font-bold
+                  text-white
+                  transition-all
+                  hover:bg-red-400
+                  active:scale-[0.985]
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+                "
+              >
+                {isToggleSaving ? (
+                  <span
+                    className="
+                      flex
+                      items-center
+                      justify-center
+                      gap-2
+                    "
+                  >
+                    <Loader2
+                      size={14}
+                      className="animate-spin"
+                    />
+                    Memproses...
+                  </span>
+                ) : (
+                  "Ya, Matikan"
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1212,16 +1615,14 @@ export default function Home() {
 
       <div
         className="
-          relative 
-    mx-auto
-    mt-4 
-    w-full 
-    md:w-2/3 
-    lg:w-1/2 
+          relative
+          mx-auto
+          mt-4
+          w-full
+          md:w-2/3
+          lg:w-1/2
         "
       >
-        {/* GLOW */}
-
         <div
           className="
             pointer-events-none
@@ -1256,9 +1657,6 @@ export default function Home() {
           "
         >
           <div className="flex flex-col gap-4">
-
-            {/* BROKER ACCUMULATION */}
-
             <Link
               href={links[0].url}
               className="
@@ -1308,10 +1706,7 @@ export default function Home() {
                       dark:text-zinc-400
                     "
                   >
-                    {
-                      links[0]
-                        .description
-                    }
+                    {links[0].description}
                   </p>
                 </div>
 
@@ -1327,8 +1722,6 @@ export default function Home() {
                 />
               </div>
             </Link>
-
-            {/* BROKER MOVEMENT */}
 
             <Link
               href={links[1].url}
@@ -1381,10 +1774,7 @@ export default function Home() {
                       dark:text-zinc-400
                     "
                   >
-                    {
-                      links[1]
-                        .description
-                    }
+                    {links[1].description}
                   </p>
                 </div>
 
@@ -1493,13 +1883,18 @@ export default function Home() {
               <button
                 type="button"
                 role="switch"
-                aria-checked={isTradePlaneOn}
+                aria-checked={
+                  isTradePlaneOn
+                }
                 aria-label="Toggle Trade Plane"
                 disabled={
                   authLoading ||
-                  isTradePlaneLoading
+                  isTradePlaneLoading ||
+                  isToggleSaving
                 }
-                onClick={handleTradePlaneToggle}
+                onClick={
+                  handleTradePlaneToggle
+                }
                 className={`
                   relative
                   h-7
@@ -1514,7 +1909,8 @@ export default function Home() {
                   }
                   ${
                     authLoading ||
-                    isTradePlaneLoading
+                    isTradePlaneLoading ||
+                    isToggleSaving
                       ? "cursor-wait opacity-60"
                       : ""
                   }
@@ -1552,13 +1948,15 @@ export default function Home() {
                   }
                 `}
               >
-                {isTradePlaneOn ? "ON" : "OFF"}
+                {isTradePlaneOn
+                  ? "ON"
+                  : "OFF"}
               </span>
             </div>
           </div>
 
           {/* =================================================
-              CONFIGURATION PANEL
+              CONFIGURATION
           ================================================= */}
 
           <div
@@ -1621,8 +2019,6 @@ export default function Home() {
                   </p>
                 </div>
 
-                {/* TYPE */}
-
                 <div
                   className="
                     grid
@@ -1633,7 +2029,9 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() =>
-                      handleDestinationChange("telegram")
+                      handleDestinationChange(
+                        "telegram"
+                      )
                     }
                     className={`
                       rounded-lg
@@ -1645,7 +2043,8 @@ export default function Home() {
                       transition-all
                       duration-200
                       ${
-                        destinationType === "telegram"
+                        destinationType ===
+                        "telegram"
                           ? "border-yellow-500/50 bg-yellow-500/10 text-yellow-500"
                           : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
                       }
@@ -1657,7 +2056,9 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() =>
-                      handleDestinationChange("whatsapp")
+                      handleDestinationChange(
+                        "whatsapp"
+                      )
                     }
                     className={`
                       rounded-lg
@@ -1669,7 +2070,8 @@ export default function Home() {
                       transition-all
                       duration-200
                       ${
-                        destinationType === "whatsapp"
+                        destinationType ===
+                        "whatsapp"
                           ? "border-yellow-500/50 bg-yellow-500/10 text-yellow-500"
                           : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
                       }
@@ -1678,8 +2080,6 @@ export default function Home() {
                     WhatsApp
                   </button>
                 </div>
-
-                {/* TARGET */}
 
                 <div className="mt-3">
                   <label
@@ -1692,25 +2092,30 @@ export default function Home() {
                       dark:text-zinc-400
                     "
                   >
-                    {destinationType === "telegram"
+                    {destinationType ===
+                    "telegram"
                       ? "Telegram Chat ID"
                       : "WhatsApp Number"}
                   </label>
 
                   <input
                     type={
-                      destinationType === "whatsapp"
+                      destinationType ===
+                      "whatsapp"
                         ? "tel"
                         : "text"
                     }
-                    value={destinationTarget}
+                    value={
+                      destinationTarget
+                    }
                     onChange={(event) =>
                       handleDestinationTargetChange(
                         event.target.value
                       )
                     }
                     placeholder={
-                      destinationType === "telegram"
+                      destinationType ===
+                      "telegram"
                         ? "-1001234567890"
                         : "628123456789"
                     }
@@ -1803,8 +2208,6 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* BROKER DROPDOWN */}
-
                 <div
                   ref={dropdownRef}
                   className="
@@ -1867,7 +2270,9 @@ export default function Home() {
                             }
                           `}
                         >
-                          {selectedBroker.broker_code}
+                          {
+                            selectedBroker.broker_code
+                          }
                         </span>
 
                         <span
@@ -1878,7 +2283,9 @@ export default function Home() {
                             dark:text-zinc-400
                           "
                         >
-                          {selectedBroker.broker_name}
+                          {
+                            selectedBroker.broker_name
+                          }
                         </span>
                       </div>
                     ) : (
@@ -1910,8 +2317,6 @@ export default function Home() {
                     />
                   </button>
 
-                  {/* DROPDOWN LIST */}
-
                   {isBrokerDropdownOpen &&
                     brokers.length > 0 && (
                       <div
@@ -1936,84 +2341,90 @@ export default function Home() {
                           dark:shadow-[0_20px_50px_rgba(0,0,0,0.55)]
                         "
                       >
-                        {brokers.map((broker) => {
-                          const selected =
-                            broker.broker_code ===
-                            selectedBrokerCode;
+                        {brokers.map(
+                          (broker) => {
+                            const selected =
+                              broker.broker_code ===
+                              selectedBrokerCode;
 
-                          return (
-                            <button
-                              key={`${broker.broker_code}-${broker.broker_id}`}
-                              type="button"
-                              onClick={() =>
-                                handleBrokerSelect(
-                                  broker
-                                )
-                              }
-                              className={`
-                                flex
-                                w-full
-                                items-center
-                                justify-between
-                                gap-3
-                                rounded-lg
-                                px-3
-                                py-2.5
-                                text-left
-                                transition-colors
-                                ${
-                                  selected
-                                    ? "bg-yellow-500/10"
-                                    : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            return (
+                              <button
+                                key={`${broker.broker_code}-${broker.broker_id}`}
+                                type="button"
+                                onClick={() =>
+                                  handleBrokerSelect(
+                                    broker
+                                  )
                                 }
-                              `}
-                            >
-                              <div
-                                className="
+                                className={`
                                   flex
-                                  min-w-0
+                                  w-full
                                   items-center
-                                  gap-2.5
-                                "
+                                  justify-between
+                                  gap-3
+                                  rounded-lg
+                                  px-3
+                                  py-2.5
+                                  text-left
+                                  transition-colors
+                                  ${
+                                    selected
+                                      ? "bg-yellow-500/10"
+                                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                                  }
+                                `}
                               >
-                                <span
-                                  className={`
-                                    text-sm
-                                    font-bold
-                                    ${
-                                      broker.is_foreign
-                                        ? "text-red-500"
-                                        : "text-zinc-900 dark:text-white"
+                                <div
+                                  className="
+                                    flex
+                                    min-w-0
+                                    items-center
+                                    gap-2.5
+                                  "
+                                >
+                                  <span
+                                    className={`
+                                      text-sm
+                                      font-bold
+                                      ${
+                                        broker.is_foreign
+                                          ? "text-red-500"
+                                          : "text-zinc-900 dark:text-white"
+                                      }
+                                    `}
+                                  >
+                                    {
+                                      broker.broker_code
                                     }
-                                  `}
-                                >
-                                  {broker.broker_code}
-                                </span>
+                                  </span>
 
-                                <span
-                                  className="
-                                    truncate
-                                    text-xs
-                                    text-zinc-500
-                                    dark:text-zinc-400
-                                  "
-                                >
-                                  {broker.broker_name}
-                                </span>
-                              </div>
+                                  <span
+                                    className="
+                                      truncate
+                                      text-xs
+                                      text-zinc-500
+                                      dark:text-zinc-400
+                                    "
+                                  >
+                                    {
+                                      broker.broker_name
+                                    }
+                                  </span>
+                                </div>
 
-                              {selected && (
-                                <Check
-                                  size={15}
-                                  className="
-                                    shrink-0
-                                    text-green-500
-                                  "
-                                />
-                              )}
-                            </button>
-                          );
-                        })}
+                                {selected && (
+                                  <Check
+                                    size={15}
+                                    className="
+                                      shrink-0
+                                      text-green-500
+                                    "
+                                  />
+                                )}
+                              </button>
+                            );
+                          }
+                        )}
                       </div>
                     )}
                 </div>
@@ -2029,10 +2440,14 @@ export default function Home() {
             <div className="relative z-10">
               <button
                 type="button"
-                onClick={handleSaveTradePlane}
+                onClick={
+                  handleSaveTradePlane
+                }
                 disabled={
-                  saveStatus === "saving" ||
-                  isTradePlaneLoading
+                  saveStatus ===
+                    "saving" ||
+                  isTradePlaneLoading ||
+                  isToggleSaving
                 }
                 className="
                   mt-3
@@ -2058,7 +2473,8 @@ export default function Home() {
                   disabled:opacity-60
                 "
               >
-                {saveStatus === "saving" ? (
+                {saveStatus ===
+                "saving" ? (
                   <>
                     <Loader2
                       size={15}
@@ -2066,7 +2482,8 @@ export default function Home() {
                     />
                     Menyimpan...
                   </>
-                ) : saveStatus === "success" ? (
+                ) : saveStatus ===
+                  "success" ? (
                   <>
                     <Check size={15} />
                     Tersimpan
@@ -2085,7 +2502,8 @@ export default function Home() {
               STATUS
           ================================================= */}
 
-          {saveStatus === "success" &&
+          {saveStatus ===
+            "success" &&
             isTradePlaneOn && (
               <div
                 className="
@@ -2109,26 +2527,25 @@ export default function Home() {
               </div>
             )}
 
-          {saveStatus === "error" &&
-            isTradePlaneOn && (
-              <div
-                className="
-                  relative
-                  z-10
-                  mt-2
-                  rounded-lg
-                  bg-red-500/5
-                  px-3
-                  py-2
-                  text-center
-                  text-[10px]
-                  text-red-500
-                "
-              >
-                Pastikan broker dan destination
-                sudah diisi dengan benar.
-              </div>
-            )}
+          {saveStatus ===
+            "error" && (
+            <div
+              className="
+                relative
+                z-10
+                mt-2
+                rounded-lg
+                bg-red-500/5
+                px-3
+                py-2
+                text-center
+                text-[10px]
+                text-red-500
+              "
+            >
+              Terjadi kesalahan. Silakan coba lagi.
+            </div>
+          )}
 
           {/* =================================================
               CURRENT STATUS
@@ -2251,7 +2668,9 @@ export default function Home() {
                       "
                     />
 
-                    <span>{note.note}</span>
+                    <span>
+                      {note.note}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -2293,3 +2712,4 @@ export default function Home() {
     </div>
   );
 }
+

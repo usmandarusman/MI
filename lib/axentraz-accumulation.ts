@@ -1,4 +1,5 @@
 import { db } from "@/lib/firebase-admin";
+
 import {
   calculateAccumulationPct,
   calculateAccumulationRate,
@@ -6,7 +7,8 @@ import {
   ACCUMULATION_RATE_MIN,
 } from "@/lib/accumulation";
 
-const AXENTRAZ_BASE_URL = "https://api.axentraz.id";
+const AXENTRAZ_BASE_URL =
+  "https://api.axentraz.id";
 
 export type AxentrazSymbol = {
   symbol_id: number;
@@ -71,6 +73,14 @@ export type AxentrazResult = {
   ma20: number;
   dist_ma20: number;
 
+  /**
+   * Ini adalah volume proxy dari data broker:
+   * buy_lot + sell_lot
+   *
+   * BUKAN market volume.
+   */
+  volume: number;
+
   shares: number;
   free_float: number;
 
@@ -97,7 +107,9 @@ export type AxentrazAccumulationResponse = {
 
 function toNumber(value: unknown): number {
   if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
+    return Number.isFinite(value)
+      ? value
+      : 0;
   }
 
   if (typeof value === "string") {
@@ -107,13 +119,17 @@ function toNumber(value: unknown): number {
 
     const number = Number(normalized);
 
-    return Number.isFinite(number) ? number : 0;
+    return Number.isFinite(number)
+      ? number
+      : 0;
   }
 
   return 0;
 }
 
-function extractArray(payload: unknown): unknown[] {
+function extractArray(
+  payload: unknown
+): unknown[] {
   if (Array.isArray(payload)) {
     return payload;
   }
@@ -122,9 +138,10 @@ function extractArray(payload: unknown): unknown[] {
     payload &&
     typeof payload === "object"
   ) {
-    const level1 = payload as {
-      data?: unknown;
-    };
+    const level1 =
+      payload as {
+        data?: unknown;
+      };
 
     if (Array.isArray(level1.data)) {
       return level1.data;
@@ -134,9 +151,10 @@ function extractArray(payload: unknown): unknown[] {
       level1.data &&
       typeof level1.data === "object"
     ) {
-      const level2 = level1.data as {
-        data?: unknown;
-      };
+      const level2 =
+        level1.data as {
+          data?: unknown;
+        };
 
       if (Array.isArray(level2.data)) {
         return level2.data;
@@ -161,16 +179,38 @@ async function fetchAxentrazSymbols(
     );
   }
 
+  if (
+    !Number.isInteger(brokerId) ||
+    brokerId <= 0
+  ) {
+    throw new Error(
+      `brokerId tidak valid: ${brokerId}`
+    );
+  }
+
+  if (
+    !/^\d{8}$/.test(from) ||
+    !/^\d{8}$/.test(to)
+  ) {
+    throw new Error(
+      `Format tanggal harus YYYYMMDD. from=${from}, to=${to}`
+    );
+  }
+
   const url =
     `${AXENTRAZ_BASE_URL}` +
-    `/broker-activity/${encodeURIComponent(
-      brokerId
-    )}` +
-    `/symbols?from=${from}&to=${to}`;
+    `/broker-activity/${brokerId}` +
+    `/symbols?from=${encodeURIComponent(from)}` +
+    `&to=${encodeURIComponent(to)}`;
 
   console.log(
     "[AXENTRAZ] Request:",
-    url
+    {
+      brokerId,
+      from,
+      to,
+      url,
+    }
   );
 
   const response = await fetch(
@@ -179,9 +219,7 @@ async function fetchAxentrazSymbols(
       method: "GET",
 
       headers: {
-        Accept:
-          "application/json",
-
+        Accept: "application/json",
         Authorization:
           `Bearer ${token}`,
       },
@@ -194,13 +232,19 @@ async function fetchAxentrazSymbols(
     await response.text();
 
   console.log(
-    "[AXENTRAZ] HTTP Status:",
-    response.status
+    "[AXENTRAZ] HTTP:",
+    {
+      status:
+        response.status,
+      brokerId,
+      from,
+      to,
+    }
   );
 
   if (!response.ok) {
     console.error(
-      "[AXENTRAZ] Error response:",
+      "[AXENTRAZ] Error:",
       rawText
     );
 
@@ -220,9 +264,15 @@ async function fetchAxentrazSymbols(
     );
   }
 
-  return extractArray(
-    parsed
-  ) as AxentrazSymbol[];
+  const rows =
+    extractArray(parsed) as AxentrazSymbol[];
+
+  console.log(
+    "[AXENTRAZ] Symbols:",
+    rows.length
+  );
+
+  return rows;
 }
 
 async function getOwnershipMap(
@@ -232,16 +282,19 @@ async function getOwnershipMap(
     ...new Set(symbols),
   ];
 
-  if (
-    uniqueSymbols.length === 0
-  ) {
-    return new Map<
+  const ownershipMap =
+    new Map<
       string,
       {
         shares: number;
         freeFloat: number;
       }
     >();
+
+  if (
+    uniqueSymbols.length === 0
+  ) {
+    return ownershipMap;
   }
 
   const refs =
@@ -254,15 +307,6 @@ async function getOwnershipMap(
 
   const snapshots =
     await db.getAll(...refs);
-
-  const ownershipMap =
-    new Map<
-      string,
-      {
-        shares: number;
-        freeFloat: number;
-      }
-    >();
 
   snapshots.forEach(
     (snapshot, index) => {
@@ -310,28 +354,21 @@ async function getOwnershipMap(
   return ownershipMap;
 }
 
-export async function getAxentrazAccumulation(
-  {
-    brokerId,
-    from,
-    to,
-  }: {
-    brokerId: number;
-    from: string;
-    to: string;
-  }
-): Promise<AxentrazAccumulationResponse> {
+export async function getAxentrazAccumulation({
+  brokerId,
+  from,
+  to,
+}: {
+  brokerId: number;
+  from: string;
+  to: string;
+}): Promise<AxentrazAccumulationResponse> {
   const rows =
     await fetchAxentrazSymbols(
       brokerId,
       from,
       to
     );
-
-  console.log(
-    "[AXENTRAZ] Symbols:",
-    rows.length
-  );
 
   const symbols =
     rows
@@ -349,8 +386,8 @@ export async function getAxentrazAccumulation(
       symbols
     );
 
-  const results: AxentrazResult[] =
-    [];
+  const results:
+    AxentrazResult[] = [];
 
   let skippedOwnership = 0;
   let skippedInvalid = 0;
@@ -368,17 +405,20 @@ export async function getAxentrazAccumulation(
       continue;
     }
 
+    const buyLot =
+      toNumber(
+        row.buy_lot
+      );
+
+    const sellLot =
+      toNumber(
+        row.sell_lot
+      );
+
     const netLots =
       toNumber(
         row.net_lot
       );
-
-    if (
-      !Number.isFinite(netLots)
-    ) {
-      skippedInvalid++;
-      continue;
-    }
 
     const ownership =
       ownershipMap.get(
@@ -389,6 +429,9 @@ export async function getAxentrazAccumulation(
       skippedOwnership++;
       continue;
     }
+
+    const volume =
+      buyLot + sellLot;
 
     const accumulation =
       calculateAccumulationPct({
@@ -421,14 +464,10 @@ export async function getAxentrazAccumulation(
         ),
 
       buy_lot:
-        toNumber(
-          row.buy_lot
-        ),
+        buyLot,
 
       sell_lot:
-        toNumber(
-          row.sell_lot
-        ),
+        sellLot,
 
       buy_val:
         toNumber(
@@ -498,6 +537,8 @@ export async function getAxentrazAccumulation(
           row.dist_ma20
         ),
 
+      volume,
+
       shares:
         ownership.shares,
 
@@ -508,9 +549,7 @@ export async function getAxentrazAccumulation(
 
       accumulation_rate:
         Number(
-          accumulationRate.toFixed(
-            2
-          )
+          accumulationRate.toFixed(2)
         ),
     });
   }
