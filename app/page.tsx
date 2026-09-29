@@ -63,7 +63,7 @@ const BROKERS_CACHE_KEY =
 const notes = [
   {
     id: 1,
-    note: "Fitur untuk mengirimkan signal ke channel.",
+    note: "Fitur ini untuk mengirimkan signal ke channel.",
   },
   {
     id: 2,
@@ -73,6 +73,10 @@ const notes = [
     id: 3,
     note: "Sebagus apapun analisamu akan hancur jika ada kejadian atau event tertentu, karena event diatas segalanya dalam dunia saham.",
   },
+  {
+    id: 4,
+    note: "Kadang tidak trade sama sekali adalah pilihan terbaik."
+  }
 ];
 
 /* =========================================================
