@@ -29,23 +29,8 @@ type BrokerOption = {
   [key: string]: unknown;
 };
 
-/*
- * Backend tetap menggunakan field destination_type.
- * Untuk UI sekarang hanya Telegram yang tersedia.
- */
 type DestinationType = "telegram";
 
-/*
- * Periode akumulasi.
- *
- * Maksimal 3 bulan.
- *
- * 1w  = Last 1 Week
- * mtd = Month to Date
- * 1m  = Last 1 Month
- * 2m  = Last 2 Month
- * 3m  = Last 3 Month
- */
 type AccumulationPeriod =
   | "1w"
   | "mtd"
@@ -76,12 +61,6 @@ type SaveStatus =
 const BROKERS_CACHE_KEY =
   "idx-brokers-cache-v1";
 
-/*
- * Default periode.
- *
- * Kalau dokumen Firebase lama belum mempunyai
- * accumulation_period, frontend akan menggunakan MTD.
- */
 const DEFAULT_ACCUMULATION_PERIOD: AccumulationPeriod =
   "mtd";
 
@@ -395,35 +374,16 @@ export default function Signal() {
     setShowLogin,
   ] = useState(false);
 
-  /*
-   * Popup ketika user ingin
-   * mematikan Signal.
-   */
   const [
     showDisableConfirm,
     setShowDisableConfirm,
   ] = useState(false);
 
-  /*
-   * Menyimpan action setelah login.
-   *
-   * Hanya digunakan untuk:
-   *
-   * OFF -> ON -> belum login
-   *
-   * Setelah login, switch otomatis
-   * diaktifkan.
-   */
   const [
     pendingEnableAfterLogin,
     setPendingEnableAfterLogin,
   ] = useState(false);
 
-  /*
-   * User sebelumnya.
-   *
-   * Digunakan untuk mendeteksi logout.
-   */
   const previousUserRef =
     useRef<typeof user>(null);
 
@@ -460,12 +420,6 @@ export default function Signal() {
     setIsTradePlaneOn,
   ] = useState(false);
 
-  /*
-   * Backend tetap menggunakan
-   * destination_type.
-   *
-   * UI sekarang hanya Telegram.
-   */
   const [
     destinationType,
     setDestinationType,
@@ -479,9 +433,6 @@ export default function Signal() {
     setDestinationTarget,
   ] = useState("");
 
-  /*
-   * PERIODE AKUMULASI
-   */
   const [
     accumulationPeriod,
     setAccumulationPeriod,
@@ -501,6 +452,21 @@ export default function Signal() {
     "idle"
   );
 
+  /*
+   * Pesan khusus validasi form.
+   *
+   * Ini BERBEDA dengan saveStatus === "error".
+   *
+   * Contoh:
+   * - "Pilih broker terlebih dahulu."
+   * - "Isi Telegram Chat ID terlebih dahulu."
+   * - "Silakan lengkapi semua konfigurasi terlebih dahulu."
+   */
+  const [
+    validationMessage,
+    setValidationMessage,
+  ] = useState("");
+
   /* =======================================================
      SERVER LOADING
   ======================================================= */
@@ -510,10 +476,6 @@ export default function Signal() {
     setIsTradePlaneLoading,
   ] = useState(false);
 
-  /*
-   * Mencegah klik switch berulang
-   * ketika sedang PUT.
-   */
   const [
     isToggleSaving,
     setIsToggleSaving,
@@ -669,11 +631,6 @@ export default function Signal() {
     let cancelled = false;
 
     async function loadTradePlane() {
-      /*
-       * Belum login.
-       *
-       * Jangan menghapus draft UI.
-       */
       if (!user) {
         setIsTradePlaneLoading(false);
         return;
@@ -685,10 +642,6 @@ export default function Signal() {
         const idToken =
           await user.getIdToken();
 
-        /*
-         * Backend tetap menggunakan
-         * endpoint /api/trade-plane.
-         */
         const response =
           await fetch(
             "/api/trade-plane",
@@ -720,11 +673,6 @@ export default function Signal() {
           data?.config ??
           getDefaultTradePlaneConfig();
 
-        /*
-         * Jika sedang menunggu enable
-         * setelah login, jangan menimpa
-         * state dengan false sebelum PUT.
-         */
         if (!pendingEnableAfterLogin) {
           setIsTradePlaneOn(
             config.enabled === true
@@ -751,13 +699,6 @@ export default function Signal() {
 
         /* DESTINATION */
 
-        /*
-         * WhatsApp sudah dihapus dari UI.
-         *
-         * Kalau konfigurasi lama di DB
-         * masih berisi "whatsapp", UI
-         * otomatis menggunakan Telegram.
-         */
         setDestinationType("telegram");
 
         setDestinationTarget(
@@ -767,12 +708,8 @@ export default function Signal() {
           ).trim()
         );
 
-        /*
-         * ACCUMULATION PERIOD
-         *
-         * Kalau dokumen lama belum mempunyai
-         * field ini, gunakan MTD.
-         */
+        /* ACCUMULATION PERIOD */
+
         setAccumulationPeriod(
           normalizeAccumulationPeriod(
             config.accumulation_period
@@ -780,6 +717,13 @@ export default function Signal() {
         );
 
         setSaveStatus("idle");
+
+        /*
+         * Jangan tampilkan pesan validasi
+         * ketika konfigurasi berhasil
+         * dimuat dari Firebase.
+         */
+        setValidationMessage("");
       } catch (error) {
         if (!cancelled) {
           console.error(
@@ -829,14 +773,13 @@ export default function Signal() {
       setDestinationType("telegram");
       setDestinationTarget("");
 
-      /*
-       * Reset periode ke default.
-       */
       setAccumulationPeriod(
         DEFAULT_ACCUMULATION_PERIOD
       );
 
       setSaveStatus("idle");
+
+      setValidationMessage("");
 
       setIsTradePlaneLoading(false);
       setIsToggleSaving(false);
@@ -872,16 +815,21 @@ export default function Signal() {
     /*
      * Login berhasil.
      *
-     * Sekarang baru benar-benar
-     * aktifkan Signal ke DB.
+     * TIDAK melakukan PUT.
+     *
+     * Switch hanya dibuka.
      */
     setShowLogin(false);
+
+    setIsTradePlaneOn(true);
+
+    setSaveStatus("idle");
+
+    setValidationMessage("");
 
     setPendingEnableAfterLogin(
       false
     );
-
-    void enableTradePlane(user);
   }, [
     user,
     pendingEnableAfterLogin,
@@ -921,155 +869,6 @@ export default function Signal() {
   }, []);
 
   /* =======================================================
-     ENABLE SIGNAL
-  ======================================================= */
-
-  async function enableTradePlane(
-    currentUser: NonNullable<
-      typeof user
-    >
-  ) {
-    if (isToggleSaving) {
-      return;
-    }
-
-    setIsToggleSaving(true);
-    setSaveStatus("saving");
-
-    try {
-      const idToken =
-        await currentUser.getIdToken();
-
-      /*
-       * Backend tetap menerima
-       * TradePlaneConfig.
-       *
-       * Hanya destination Telegram.
-       *
-       * accumulation_period sekarang
-       * ikut dikirim ke backend.
-       */
-      const config: TradePlaneConfig =
-        {
-          enabled: true,
-
-          broker_code:
-            selectedBrokerCode,
-
-          broker_id:
-            selectedBrokerId,
-
-          broker_name:
-            selectedBroker
-              ?.broker_name ?? "",
-
-          destination_type:
-            "telegram",
-
-          destination_target:
-            destinationTarget.trim(),
-
-          accumulation_period:
-            accumulationPeriod,
-        };
-
-      const response =
-        await fetch(
-          "/api/trade-plane",
-          {
-            method: "PUT",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-
-              Authorization:
-                `Bearer ${idToken}`,
-            },
-
-            body: JSON.stringify(
-              config
-            ),
-          }
-        );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data?.error ??
-            "Gagal mengaktifkan Signal."
-        );
-      }
-
-      const savedConfig =
-        data?.config ?? config;
-
-      setIsTradePlaneOn(
-        savedConfig.enabled === true
-      );
-
-      setSelectedBrokerCode(
-        String(
-          savedConfig.broker_code ??
-            ""
-        )
-          .trim()
-          .toUpperCase()
-      );
-
-      setSelectedBrokerId(
-        typeof savedConfig.broker_id ===
-          "number"
-          ? savedConfig.broker_id
-          : null
-      );
-
-      /*
-       * UI selalu Telegram.
-       */
-      setDestinationType(
-        "telegram"
-      );
-
-      setDestinationTarget(
-        String(
-          savedConfig.destination_target ??
-            ""
-        ).trim()
-      );
-
-      /*
-       * Ambil kembali periode dari
-       * response server.
-       */
-      setAccumulationPeriod(
-        normalizeAccumulationPeriod(
-          savedConfig.accumulation_period
-        )
-      );
-
-      setSaveStatus("success");
-    } catch (error) {
-      console.error(
-        "[Signal] Enable error:",
-        error
-      );
-
-      /*
-       * Kalau gagal enable,
-       * switch kembali OFF.
-       */
-      setIsTradePlaneOn(false);
-
-      setSaveStatus("error");
-    } finally {
-      setIsToggleSaving(false);
-    }
-  }
-
-  /* =======================================================
      DISABLE SIGNAL
   ======================================================= */
 
@@ -1080,18 +879,12 @@ export default function Signal() {
 
     setIsToggleSaving(true);
     setSaveStatus("saving");
+    setValidationMessage("");
 
     try {
       const idToken =
         await user.getIdToken();
 
-      /*
-       * Hanya enabled:false.
-       *
-       * Broker + destination +
-       * accumulation_period tetap
-       * tersimpan di backend.
-       */
       const response =
         await fetch(
           "/api/trade-plane",
@@ -1125,14 +918,8 @@ export default function Signal() {
       const savedConfig =
         data?.config;
 
-      /*
-       * Server berhasil.
-       */
       setIsTradePlaneOn(false);
 
-      /*
-       * Jangan hapus broker/destination.
-       */
       if (savedConfig) {
         setSelectedBrokerCode(
           String(
@@ -1150,9 +937,6 @@ export default function Signal() {
             : selectedBrokerId
         );
 
-        /*
-         * UI selalu Telegram.
-         */
         setDestinationType(
           "telegram"
         );
@@ -1164,10 +948,6 @@ export default function Signal() {
           ).trim()
         );
 
-        /*
-         * Jangan sampai periode hilang
-         * setelah OFF.
-         */
         setAccumulationPeriod(
           normalizeAccumulationPeriod(
             savedConfig.accumulation_period ??
@@ -1183,9 +963,6 @@ export default function Signal() {
         error
       );
 
-      /*
-       * Gagal OFF -> tetap ON.
-       */
       setIsTradePlaneOn(true);
 
       setSaveStatus("error");
@@ -1200,10 +977,6 @@ export default function Signal() {
 
   const handleTradePlaneToggle =
     () => {
-      /*
-       * Jangan izinkan toggle ketika
-       * authentication masih diperiksa.
-       */
       if (
         authLoading ||
         isTradePlaneLoading ||
@@ -1212,25 +985,15 @@ export default function Signal() {
         return;
       }
 
-      /* =================================================
-         ON -> OFF
-      ================================================= */
+      /* ON -> OFF */
 
       if (isTradePlaneOn) {
         setShowDisableConfirm(true);
         return;
       }
 
-      /* =================================================
-         OFF -> ON
-      ================================================= */
+      /* OFF -> ON */
 
-      /*
-       * Belum login.
-       *
-       * Jangan ON dulu.
-       * Minta login.
-       */
       if (!user) {
         setPendingEnableAfterLogin(
           true
@@ -1244,9 +1007,13 @@ export default function Signal() {
       /*
        * Sudah login.
        *
-       * Langsung enable:true ke DB.
+       * ON hanya membuka konfigurasi.
        */
-      void enableTradePlane(user);
+      setIsTradePlaneOn(true);
+
+      setSaveStatus("idle");
+
+      setValidationMessage("");
     };
 
   /* =======================================================
@@ -1287,6 +1054,12 @@ export default function Signal() {
       false
     );
 
+    /*
+     * Broker sudah diisi.
+     * Hapus pesan validasi.
+     */
+    setValidationMessage("");
+
     setSaveStatus("idle");
   };
 
@@ -1302,6 +1075,8 @@ export default function Signal() {
         period
       );
 
+      setValidationMessage("");
+
       setSaveStatus("idle");
     };
 
@@ -1311,6 +1086,9 @@ export default function Signal() {
 
   const handleDestinationChange = () => {
     setDestinationType("telegram");
+
+    setValidationMessage("");
+
     setSaveStatus("idle");
   };
 
@@ -1321,6 +1099,13 @@ export default function Signal() {
   const handleDestinationTargetChange =
     (value: string) => {
       setDestinationTarget(value);
+
+      /*
+       * Kalau user mulai mengetik,
+       * hapus pesan validasi.
+       */
+      setValidationMessage("");
+
       setSaveStatus("idle");
     };
 
@@ -1334,43 +1119,93 @@ export default function Signal() {
        * ON harus login.
        */
       if (!user) {
-        /*
-         * Fallback safety.
-         */
         setIsTradePlaneOn(false);
+
         setPendingEnableAfterLogin(
           true
         );
+
         setShowLogin(true);
+
         return;
       }
 
       /*
-       * Broker wajib.
+       * Bersihkan pesan lama
+       * sebelum melakukan validasi.
        */
-      if (
-        !selectedBroker ||
-        selectedBrokerId === null
-      ) {
-        setSaveStatus("error");
-        return;
-      }
+      setValidationMessage("");
+
+      setSaveStatus("idle");
 
       /*
-       * Telegram Chat ID wajib.
-       */
-      if (
-        !destinationTarget.trim()
-      ) {
-        setSaveStatus("error");
-        return;
-      }
-
-      /*
-       * Simpan konfigurasi.
+       * ===================================================
+       * VALIDASI FORM
+       * ===================================================
        *
-       * enabled tetap TRUE karena
-       * switch sedang ON.
+       * INI BUKAN ERROR SERVER.
+       *
+       * Jadi jangan menggunakan:
+       *
+       * setSaveStatus("error")
+       *
+       * untuk field kosong.
+       */
+
+      const brokerIsValid =
+        Boolean(
+          selectedBroker &&
+            selectedBrokerCode &&
+            selectedBrokerId !== null
+        );
+
+      const telegramIsValid =
+        Boolean(
+          destinationTarget.trim()
+        );
+
+      /*
+       * Broker + Telegram sama-sama kosong.
+       */
+      if (
+        !brokerIsValid &&
+        !telegramIsValid
+      ) {
+        setValidationMessage(
+          "Silakan lengkapi semua konfigurasi terlebih dahulu."
+        );
+
+        return;
+      }
+
+      /*
+       * Broker belum dipilih.
+       */
+      if (!brokerIsValid) {
+        setValidationMessage(
+          "Pilih broker terlebih dahulu."
+        );
+
+        return;
+      }
+
+      /*
+       * Telegram Chat ID belum diisi.
+       */
+      if (!telegramIsValid) {
+        setValidationMessage(
+          "Isi Telegram Chat ID terlebih dahulu."
+        );
+
+        return;
+      }
+
+      /*
+       * ===================================================
+       * SEMUA VALID
+       * ===================================================
+       *
+       * Baru sekarang backend dipanggil.
        */
       await saveTradePlaneWithUser(
         user
@@ -1387,6 +1222,8 @@ export default function Signal() {
     >
   ) {
     setSaveStatus("saving");
+
+    setValidationMessage("");
 
     try {
       const idToken =
@@ -1415,6 +1252,11 @@ export default function Signal() {
           accumulation_period:
             accumulationPeriod,
         };
+
+      console.log(
+        "[Signal] Saving configuration:",
+        config
+      );
 
       const response =
         await fetch(
@@ -1469,9 +1311,6 @@ export default function Signal() {
           : null
       );
 
-      /*
-       * UI selalu Telegram.
-       */
       setDestinationType(
         "telegram"
       );
@@ -1483,15 +1322,16 @@ export default function Signal() {
         ).trim()
       );
 
-      /*
-       * Simpan state sesuai hasil
-       * dari server.
-       */
       setAccumulationPeriod(
         normalizeAccumulationPeriod(
           savedConfig.accumulation_period
         )
       );
+
+      /*
+       * Validasi bersih setelah sukses.
+       */
+      setValidationMessage("");
 
       setSaveStatus("success");
     } catch (error) {
@@ -1500,6 +1340,10 @@ export default function Signal() {
         error
       );
 
+      /*
+       * Ini baru benar-benar error
+       * dari backend/network.
+       */
       setSaveStatus("error");
     }
   }
@@ -1532,10 +1376,6 @@ export default function Signal() {
             onClose={() => {
               setShowLogin(false);
 
-              /*
-               * Kalau login dibatalkan,
-               * batalkan juga pending ON.
-               */
               setPendingEnableAfterLogin(
                 false
               );
@@ -1995,11 +1835,10 @@ export default function Signal() {
                     )
                   }
                   placeholder="-1001234567890"
-                  className="
+                  className={`
                     w-full
                     rounded-lg
                     border
-                    border-zinc-200
                     bg-white
                     px-3
                     py-2.5
@@ -2011,10 +1850,15 @@ export default function Signal() {
                     focus:border-yellow-500
                     focus:ring-2
                     focus:ring-yellow-500/10
-                    dark:border-zinc-800
                     dark:bg-zinc-900
                     dark:text-white
-                  "
+                    ${
+                      validationMessage &&
+                      !destinationTarget.trim()
+                        ? "border-red-400 dark:border-red-500/60"
+                        : "border-zinc-200 dark:border-zinc-800"
+                    }
+                  `}
                 />
               </div>
             </div>
@@ -2103,7 +1947,7 @@ export default function Signal() {
                       (value) => !value
                     )
                   }
-                  className="
+                  className={`
                     relative
                     z-[201]
                     flex
@@ -2113,7 +1957,6 @@ export default function Signal() {
                     gap-3
                     rounded-lg
                     border
-                    border-zinc-200
                     bg-white
                     px-3
                     py-2.5
@@ -2122,9 +1965,14 @@ export default function Signal() {
                     hover:border-yellow-500/50
                     focus:border-yellow-500
                     focus:outline-none
-                    dark:border-zinc-800
                     dark:bg-zinc-900
-                  "
+                    ${
+                      validationMessage &&
+                      !selectedBroker
+                        ? "border-red-400 dark:border-red-500/60"
+                        : "border-zinc-200 dark:border-zinc-800"
+                    }
+                  `}
                 >
                   {selectedBroker ? (
                     <div
@@ -2325,11 +2173,7 @@ export default function Signal() {
                 dark:bg-zinc-950/50
               "
             >
-              <div
-                className="
-                  mb-3
-                "
-              >
+              <div className="mb-3">
                 <p
                   className="
                     text-xs
@@ -2395,11 +2239,7 @@ export default function Signal() {
                           }
                         `}
                       >
-                        <div
-                          className="
-                            min-w-0
-                          "
-                        >
+                        <div className="min-w-0">
                           <p
                             className={`
                               text-xs
@@ -2504,6 +2344,55 @@ export default function Signal() {
         </div>
 
         {/* =================================================
+            VALIDATION MESSAGE
+        ================================================= */}
+
+        {isTradePlaneOn &&
+          validationMessage && (
+            <div
+              className="
+                relative
+                z-10
+                mt-3
+                flex
+                items-center
+                gap-2
+                rounded-xl
+                border
+                border-yellow-500/20
+                bg-yellow-500/5
+                px-3.5
+                py-3
+                text-[10px]
+                font-medium
+                text-yellow-600
+                dark:text-yellow-400
+              "
+            >
+              <span
+                className="
+                  flex
+                  h-5
+                  w-5
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-full
+                  bg-yellow-500/10
+                  text-[10px]
+                  font-bold
+                "
+              >
+                !
+              </span>
+
+              <span>
+                {validationMessage}
+              </span>
+            </div>
+          )}
+
+        {/* =================================================
             SAVE BUTTON
         ================================================= */}
 
@@ -2570,7 +2459,32 @@ export default function Signal() {
         )}
 
         {/* =================================================
-            STATUS
+            SERVER ERROR
+        ================================================= */}
+
+        {saveStatus ===
+          "error" && (
+          <div
+            className="
+              relative
+              z-10
+              mt-2
+              rounded-lg
+              bg-red-500/5
+              px-3
+              py-2
+              text-center
+              text-[10px]
+              text-red-500
+            "
+          >
+            Terjadi kesalahan. Silakan
+            coba lagi.
+          </div>
+        )}
+
+        {/* =================================================
+            SUCCESS
         ================================================= */}
 
         {saveStatus ===
@@ -2597,27 +2511,6 @@ export default function Signal() {
               Konfigurasi berhasil disimpan.
             </div>
           )}
-
-        {saveStatus ===
-          "error" && (
-          <div
-            className="
-              relative
-              z-10
-              mt-2
-              rounded-lg
-              bg-red-500/5
-              px-3
-              py-2
-              text-center
-              text-[10px]
-              text-red-500
-            "
-          >
-            Terjadi kesalahan. Silakan
-            coba lagi.
-          </div>
-        )}
 
         {/* =================================================
             CURRENT STATUS
