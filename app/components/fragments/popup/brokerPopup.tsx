@@ -13,6 +13,7 @@ import {
   ArrowDownRight,
   Minus,
 } from "lucide-react";
+import Link from "next/link";
 
 type BrokerPopupProps = {
   emiten: string;
@@ -444,7 +445,8 @@ export const BrokerPopup = ({
                   </p>
                 </div>
 
-                <div
+                <Link
+                  href={`/stocks/${emiten}`}
                   className={`mb-1 flex h-10 w-10 shrink-0
                   items-center justify-center rounded-xl
                   border border-zinc-200/70 bg-white/80
@@ -458,7 +460,7 @@ export const BrokerPopup = ({
                   ) : (
                     <Minus size={21} />
                   )}
-                </div>
+                </Link>
               </div>
 
               {/* Progress */}

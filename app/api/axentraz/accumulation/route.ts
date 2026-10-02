@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+
 import {
   getAxentrazAccumulation,
 } from "@/lib/axentraz-accumulation";
+
 import {
   ACCUMULATION_RATE_MIN,
 } from "@/lib/accumulation";
@@ -13,83 +15,115 @@ export async function GET(
   request: Request
 ) {
   try {
-    const { searchParams } =
-      new URL(request.url);
+    const {
+      searchParams,
+    } = new URL(
+      request.url
+    );
 
     const brokerIdParam =
-      searchParams.get("brokerId");
+      searchParams.get(
+        "brokerId"
+      );
 
     const from =
-      searchParams.get("from");
+      searchParams.get(
+        "from"
+      );
 
     const to =
-      searchParams.get("to");
+      searchParams.get(
+        "to"
+      );
 
     if (!brokerIdParam) {
       return NextResponse.json(
         {
           success: false,
+
           message:
             "brokerId wajib diisi.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     const brokerId =
-      Number(brokerIdParam);
+      Number(
+        brokerIdParam
+      );
 
     if (
-      !Number.isInteger(brokerId) ||
+      !Number.isInteger(
+        brokerId
+      ) ||
       brokerId <= 0
     ) {
       return NextResponse.json(
         {
           success: false,
+
           message:
             "brokerId tidak valid.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     if (
       !from ||
-      !/^\d{8}$/.test(from)
+      !/^\d{8}$/.test(
+        from
+      )
     ) {
       return NextResponse.json(
         {
           success: false,
+
           message:
             "Format from harus YYYYMMDD.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     if (
       !to ||
-      !/^\d{8}$/.test(to)
+      !/^\d{8}$/.test(
+        to
+      )
     ) {
       return NextResponse.json(
         {
           success: false,
+
           message:
             "Format to harus YYYYMMDD.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     const result =
-      await getAxentrazAccumulation({
-        brokerId,
-        from,
-        to,
-      });
+      await getAxentrazAccumulation(
+        {
+          brokerId,
+          from,
+          to,
+        }
+      );
 
     return NextResponse.json({
       success: true,
+
       ...result,
     });
   } catch (error) {
@@ -113,7 +147,9 @@ export async function GET(
         minimum_rate:
           ACCUMULATION_RATE_MIN,
       },
-      { status: 502 }
+      {
+        status: 502,
+      }
     );
   }
 }

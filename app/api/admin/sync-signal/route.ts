@@ -11,6 +11,11 @@ import {
 
 import { sendTelegramMessage } from "@/lib/telegram";
 
+import {
+  analyzeSupportResistance,
+  SRHistory,
+} from "@/app/components/stock-chart/support-resistance";
+
 export const dynamic = "force-dynamic";
 
 export const maxDuration = 60;
@@ -24,44 +29,51 @@ const SIGNAL_COLLECTION = "trade-signals";
 const MIN_ACCUMULATION_RATE = 20;
 
 /*
- * Volume yang digunakan untuk filtering adalah
- * volume yang SUDAH dinormalisasi.
+ * Volume berasal dari:
  *
- * Contoh:
+ * stocks/{SYMBOL}/history/{latest-date}
  *
- * raw 392.800
- * × 0.01
- * = 3.928
- *
- * sehingga dianggap 3,928k.
- *
- * Target:
- * volume HARUS LEBIH BESAR dari 50k.
- */
-const MIN_MARKET_VOLUME = 50_000;
-
-/*
- * Faktor normalisasi volume Market Intelligence.
- *
- * Sesuai asumsi:
- *
- * 392.800 -> 3.928
- *
- * maka:
- *
- * 392800 × 0.01 = 3928
+ * Kemudian volume di-scale × 0.01,
+ * sama seperti format volume sebelumnya.
  */
 const MARKET_VOLUME_SCALE = 0.01;
 
+const MIN_MARKET_VOLUME = 50_000;
+
+/*
+ * Maksimum query Firestore yang berjalan bersamaan
+ * ketika mengambil stock history.
+ */
+const HISTORY_QUERY_CONCURRENCY = 12;
+
+/*
+ * Jumlah candle yang digunakan untuk
+ * analisis Support / Resistance.
+ *
+ * 120 hari trading kurang lebih memberi
+ * konteks sekitar 5-6 bulan bursa.
+ */
+const SR_HISTORY_LIMIT = 120;
+
 const TELEGRAM_MAX_LENGTH = 3500;
 
-const SENDING_TIMEOUT_MS = 10 * 60 * 1000;
+const SENDING_TIMEOUT_MS =
+  10 * 60 * 1000;
 
 /* =========================================================
    TYPES
 ========================================================= */
 
-type DestinationType = "telegram" | "whatsapp";
+type AccumulationPeriod =
+  | "1w"
+  | "mtd"
+  | "1m"
+  | "2m"
+  | "3m";
+
+type DestinationType =
+  | "telegram"
+  | "whatsapp";
 
 type TradePlaneConfig = {
   enabled: boolean;
@@ -72,29 +84,37 @@ type TradePlaneConfig = {
 
   broker_name: string;
 
-  destination_type: DestinationType;
+  destination_type:
+    DestinationType;
 
   destination_target: string;
+
+  /*
+   * Periode pengambilan data
+   * broker accumulation dari Axentraz.
+   */
+  accumulation_period:
+    AccumulationPeriod;
 };
 
-type TradePlaneDocument = TradePlaneConfig & {
-  uid: string;
-};
+type TradePlaneDocument =
+  TradePlaneConfig & {
+    uid: string;
+  };
 
-type SignalStatus = "sending" | "sent" | "failed";
+type SignalStatus =
+  | "sending"
+  | "sent"
+  | "failed";
 
 /* =========================================================
-   MARKET INTELLIGENCE ROW
+   STOCK HISTORY DATA
 ========================================================= */
 
-type MarketIntelligenceRow = {
-  symbol?: string;
+type StockHistoryData = {
+  code?: string;
 
-  name?: string;
-
-  sector?: string;
-
-  price?: number;
+  date?: string;
 
   open?: number;
 
@@ -102,109 +122,68 @@ type MarketIntelligenceRow = {
 
   low?: number;
 
-  changeVal?: number;
-
-  changePct?: number;
+  close?: number;
 
   volume?: number;
 
-  valueTrillion?: number;
-
-  marketState?: string;
-
-  fetchedAt?: string;
-
-  prevVolume?: number;
-
-  ma5?: number;
-
-  ma20?: number;
-
-  ma50?: number;
-
-  high20?: number;
-
-  low20?: number;
-
-  pricePct20?: number;
-
-  distMa20?: number;
-
-  volumeRatio?: number;
-
-  volSurge?: number;
-
-  gapUp?: boolean;
-
-  breakout20h?: boolean;
-
-  score?: number;
-
-  signal?: string;
-};
-
-/* =========================================================
-   NORMALIZED MARKET DATA
-========================================================= */
-
-type MarketData = {
-  /*
-   * Volume SUDAH dinormalisasi.
-   */
-  volume: number;
-
-  /*
-   * Raw volume untuk debugging.
-   */
-  rawVolume: number;
-
-  volumeRatio: number;
-
-  valueTrillion: number;
-
-  volSurge: number;
-
-  price: number;
-
-  changePct: number;
+  value?: number;
 };
 
 /* =========================================================
    TRADE SIGNAL ROW
-=========================================================
-
-   AxentrazResult
-   =
-   data broker accumulation
-
-   TradeSignalRow
-   =
-   data broker accumulation
-   +
-   data Market Intelligence
-
-   PENTING:
-   Jangan tambahkan volumeRatio/valueTrillion/volSurge
-   ke AxentrazResult karena field tersebut bukan berasal
-   dari broker-activity.
 ========================================================= */
 
-type TradeSignalRow = AxentrazResult & {
-  marketVolume: number;
+type TradeSignalRow =
+  AxentrazResult & {
+    /*
+     * Volume setelah scaling.
+     *
+     * Raw Firestore volume:
+     * stocks/{SYMBOL}/history/{DATE}
+     *
+     * marketVolume:
+     * raw volume × 0.01
+     */
+    marketVolume: number;
 
-  volumeRatio: number;
+    /*
+     * Last Price dari Firestore.
+     */
+    historyClose: number;
 
-  valueTrillion: number;
+    /*
+     * Entry Area.
+     *
+     * FIELD TRANSIENT:
+     * hanya digunakan ketika membuat Telegram.
+     *
+     * TIDAK disimpan ke Firestore.
+     */
+    entryLow: number | null;
 
-  volSurge: number;
+    entryHigh: number | null;
 
-  marketPrice: number;
-
-  marketChangePct: number;
-};
+    /*
+     * TP juga TRANSIENT.
+     *
+     * TIDAK disimpan ke Firestore.
+     */
+    tp: number | null;
+  };
 
 /* =========================================================
    FIRESTORE SIGNAL DOCUMENT
+=========================================================
+
+   PENTING:
+
+   entryLow
+   entryHigh
+   tp
+
+   TIDAK dimasukkan ke SignalDocument.
+
+   Jadi struktur Firestore lama tetap aman.
 ========================================================= */
 
 type SignalDocument = {
@@ -222,22 +201,17 @@ type SignalDocument = {
 
   accumulationRate: number;
 
+  /*
+   * Last Price dari Firestore history.close
+   */
   lastClose: number;
 
   ma20: number;
 
   /*
-   * MARKET VOLUME
-   *
-   * Ini adalah volume yang SUDAH dinormalisasi.
+   * Volume yang sudah di-scale × 0.01.
    */
   volume: number;
-
-  volumeRatio: number;
-
-  valueTrillion: number;
-
-  volSurge: number;
 
   from: string;
 
@@ -245,11 +219,17 @@ type SignalDocument = {
 
   status: SignalStatus;
 
-  createdAt: FirebaseFirestore.FieldValue | Date;
+  createdAt:
+    | FirebaseFirestore.FieldValue
+    | Date;
 
-  updatedAt: FirebaseFirestore.FieldValue | Date;
+  updatedAt:
+    | FirebaseFirestore.FieldValue
+    | Date;
 
-  sentAt?: FirebaseFirestore.FieldValue | Date;
+  sentAt?:
+    | FirebaseFirestore.FieldValue
+    | Date;
 
   sentDestination?: string;
 
@@ -260,269 +240,481 @@ type SignalDocument = {
    NUMBER
 ========================================================= */
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
+function toNumber(
+  value: unknown
+): number {
+  if (
+    typeof value ===
+    "number"
+  ) {
+    return Number.isFinite(
+      value
+    )
+      ? value
+      : 0;
   }
 
-  if (typeof value === "string") {
-    const number = Number(value.trim().replace(/,/g, ""));
+  if (
+    typeof value ===
+    "string"
+  ) {
+    const number =
+      Number(
+        value
+          .trim()
+          .replace(
+            /,/g,
+            ""
+          )
+      );
 
-    return Number.isFinite(number) ? number : 0;
+    return Number.isFinite(
+      number
+    )
+      ? number
+      : 0;
   }
 
   return 0;
 }
 
 /* =========================================================
-   MARKET VOLUME NORMALIZATION
+   STOCK HISTORY NORMALIZER
 ========================================================= */
 
-function normalizeMarketVolume(rawVolume: number): number {
-  if (!Number.isFinite(rawVolume)) {
-    return 0;
-  }
+function normalizeStockHistory(
+  data: StockHistoryData,
+  fallbackDate: string,
+  fallbackCode: string
+): StockHistoryData {
+  return {
+    code:
+      typeof data.code ===
+      "string"
+        ? data.code
+        : fallbackCode,
 
-  return rawVolume * MARKET_VOLUME_SCALE;
+    date:
+      typeof data.date ===
+      "string"
+        ? data.date
+        : fallbackDate,
+
+    open: toNumber(
+      data.open
+    ),
+
+    high: toNumber(
+      data.high
+    ),
+
+    low: toNumber(
+      data.low
+    ),
+
+    close: toNumber(
+      data.close
+    ),
+
+    volume: toNumber(
+      data.volume
+    ),
+
+    value: toNumber(
+      data.value
+    ),
+  };
 }
 
 /* =========================================================
-   MARKET INTELLIGENCE PARSER
+   STOCK HISTORY
+=========================================================
+
+   Ambil history 120 candle terakhir.
+
+   Firestore:
+   stocks/{SYMBOL}/history/{DATE}
+
+   Query DESC untuk efisien,
+   lalu dibalik menjadi ASC agar cocok
+   dengan engine Support/Resistance.
 ========================================================= */
 
-function parseMarketRows(
-  value: unknown
-): MarketIntelligenceRow[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(
-    (item): item is MarketIntelligenceRow =>
-      Boolean(item && typeof item === "object")
-  );
-}
-
-/* =========================================================
-   GET MARKET INTELLIGENCE SNAPSHOT
-========================================================= */
-
-async function getMarketIntelligenceSnapshot(): Promise<
-  MarketIntelligenceRow[]
+async function getStockHistory(
+  symbol: string
+): Promise<
+  StockHistoryData[]
 > {
-  const token = process.env.AXENTRAZ_MARKET_TOKEN;
-
-  if (!token) {
-    throw new Error(
-      "AXENTRAZ_MARKET_TOKEN belum dikonfigurasi."
-    );
-  }
-
-  /*
-   * Market Intelligence menggunakan
-   * token sebagai query parameter.
-   *
-   * BUKAN Authorization Bearer.
-   */
-
-  const url =
-    "https://axentraz.id/api/market-intelligence/stream" +
-    `?token=${encodeURIComponent(token)}`;
-
-  console.log("[MARKET INTELLIGENCE] Connecting...");
-
-  const controller = new AbortController();
-
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, 15_000);
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-
-      headers: {
-        Accept: "text/event-stream",
-      },
-
-      cache: "no-store",
-
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-
-      throw new Error(
-        `Market Intelligence HTTP ${response.status}: ${errorText}`
-      );
-    }
-
-    if (!response.body) {
-      throw new Error(
-        "Market Intelligence tidak memiliki response body."
-      );
-    }
-
-    const reader = response.body.getReader();
-
-    const decoder = new TextDecoder();
-
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, {
-          stream: true,
-        });
-
-        /*
-         * SSE event dipisahkan
-         * dengan baris kosong.
-         */
-        const events = buffer.split(/\r?\n\r?\n/);
-
-        /*
-         * Event terakhir mungkin
-         * belum lengkap.
-         */
-        buffer = events.pop() ?? "";
-
-        for (const eventBlock of events) {
-          const lines = eventBlock.split(/\r?\n/);
-
-          let eventName = "";
-
-          const dataLines: string[] = [];
-
-          for (const line of lines) {
-            if (line.startsWith("event:")) {
-              eventName = line.slice(6).trim();
-
-              continue;
-            }
-
-            if (line.startsWith("data:")) {
-              dataLines.push(line.slice(5).trim());
-            }
-          }
-
-          /*
-           * Kita hanya membutuhkan
-           * event snapshot.
-           */
-          if (
-            eventName !== "snapshot" ||
-            dataLines.length === 0
-          ) {
-            continue;
-          }
-
-          const json = dataLines.join("\n");
-
-          try {
-            const parsed = JSON.parse(json);
-
-            const rows = parseMarketRows(parsed);
-
-            if (rows.length === 0) {
-              continue;
-            }
-
-            console.log(
-              "[MARKET INTELLIGENCE] Snapshot:",
-              {
-                rows: rows.length,
-              }
-            );
-
-            return rows;
-          } catch (error) {
-            console.error(
-              "[MARKET INTELLIGENCE] Snapshot JSON error:",
-              error
-            );
-          }
-        }
-      }
-    } finally {
-      try {
-        await reader.cancel();
-      } catch {
-        // ignore
-      }
-    }
-
-    throw new Error(
-      "Market Intelligence tidak mengirim snapshot."
-    );
-  } finally {
-    clearTimeout(timeout);
-
-    controller.abort();
-  }
-}
-
-/* =========================================================
-   BUILD MARKET MAP
-========================================================= */
-
-function buildMarketMap(
-  rows: MarketIntelligenceRow[]
-): Map<string, MarketData> {
-  const map = new Map<string, MarketData>();
-
-  for (const row of rows) {
-    const symbol = String(row.symbol ?? "")
+  const normalizedSymbol =
+    symbol
       .trim()
       .toUpperCase();
 
-    if (!symbol) {
-      continue;
-    }
-
-    /*
-     * RAW VOLUME
-     */
-    const rawVolume = toNumber(row.volume);
-
-    /*
-     * NORMALIZED VOLUME
-     *
-     * Contoh:
-     *
-     * 392800
-     * × 0.01
-     * =
-     * 3928
-     */
-    const normalizedVolume =
-      normalizeMarketVolume(rawVolume);
-
-    map.set(symbol, {
-      volume: normalizedVolume,
-
-      rawVolume,
-
-      volumeRatio: toNumber(row.volumeRatio),
-
-      valueTrillion: toNumber(row.valueTrillion),
-
-      volSurge: toNumber(row.volSurge),
-
-      price: toNumber(row.price),
-
-      changePct: toNumber(row.changePct),
-    });
+  if (
+    !normalizedSymbol
+  ) {
+    return [];
   }
 
-  return map;
+  const snapshot =
+    await db
+      .collection(
+        "stocks"
+      )
+      .doc(
+        normalizedSymbol
+      )
+      .collection(
+        "history"
+      )
+      .orderBy(
+        "date",
+        "desc"
+      )
+      .limit(
+        SR_HISTORY_LIMIT
+      )
+      .get();
+
+  if (
+    snapshot.empty
+  ) {
+    return [];
+  }
+
+  const rows =
+    snapshot.docs.map(
+      (doc) => {
+        const data =
+          doc.data() as StockHistoryData;
+
+        return normalizeStockHistory(
+          data,
+          doc.id,
+          normalizedSymbol
+        );
+      }
+    );
+
+  /*
+   * Engine membutuhkan data
+   * oldest -> newest.
+   */
+  rows.reverse();
+
+  return rows;
+}
+
+/* =========================================================
+   STOCK HISTORY BATCH
+=========================================================
+
+   - deduplicate symbol
+   - cache hasil dalam 1 request
+   - batasi concurrency
+   - satu query mengambil sampai 120 candle
+========================================================= */
+
+async function getStockHistories(
+  symbols: string[]
+): Promise<
+  Map<
+    string,
+    StockHistoryData[]
+  >
+> {
+  const uniqueSymbols = [
+    ...new Set(
+      symbols
+        .map(
+          (symbol) =>
+            symbol
+              .trim()
+              .toUpperCase()
+        )
+        .filter(Boolean)
+    ),
+  ];
+
+  const result =
+    new Map<
+      string,
+      StockHistoryData[]
+    >();
+
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const index =
+        cursor++;
+
+      if (
+        index >=
+        uniqueSymbols.length
+      ) {
+        return;
+      }
+
+      const symbol =
+        uniqueSymbols[
+          index
+        ];
+
+      try {
+        const history =
+          await getStockHistory(
+            symbol
+          );
+
+        if (
+          history.length >
+          0
+        ) {
+          result.set(
+            symbol,
+            history
+          );
+        }
+      } catch (error) {
+        console.error(
+          "[TRADE PLANE] History query failed:",
+          {
+            symbol,
+
+            error:
+              error instanceof
+              Error
+                ? error.message
+                : String(
+                    error
+                  ),
+          }
+        );
+      }
+    }
+  }
+
+  const workerCount =
+    Math.min(
+      HISTORY_QUERY_CONCURRENCY,
+      uniqueSymbols.length
+    );
+
+  if (
+    workerCount === 0
+  ) {
+    return result;
+  }
+
+  await Promise.all(
+    Array.from(
+      {
+        length:
+          workerCount,
+      },
+      () => worker()
+    )
+  );
+
+  return result;
+}
+
+/* =========================================================
+   ENTRY AREA + TP
+========================================================= */
+
+type EntryTarget = {
+  entryLow: number | null;
+
+  entryHigh: number | null;
+
+  tp: number | null;
+};
+
+/*
+ * Menghitung:
+ *
+ * Entry Area
+ * = entryZone.low -> entryZone.high
+ *
+ * Support
+ * = entryZone.support.center
+ *
+ * Resistance
+ * = entryZone.resistance.center
+ *
+ * TP
+ * = Support + 50% ×
+ *   (Resistance - Support)
+ *
+ * atau:
+ *
+ * TP = (Support + Resistance) / 2
+ *
+ * PENTING:
+ * fungsi ini hanya untuk Telegram.
+ *
+ * Hasil TIDAK disimpan ke Firestore.
+ */
+function calculateEntryTarget(
+  history: StockHistoryData[]
+): EntryTarget {
+  if (
+    history.length <
+    20
+  ) {
+    return {
+      entryLow: null,
+      entryHigh: null,
+      tp: null,
+    };
+  }
+
+  const srHistory: SRHistory[] =
+    history
+      .map(
+        (item) => ({
+          date:
+            String(
+              item.date ??
+                ""
+            ),
+
+          open: toNumber(
+            item.open
+          ),
+
+          high: toNumber(
+            item.high
+          ),
+
+          low: toNumber(
+            item.low
+          ),
+
+          close: toNumber(
+            item.close
+          ),
+
+          volume: toNumber(
+            item.volume
+          ),
+        })
+      )
+      .filter(
+        (item) =>
+          item.date &&
+          item.open > 0 &&
+          item.high > 0 &&
+          item.low > 0 &&
+          item.close > 0
+      );
+
+  if (
+    srHistory.length <
+    20
+  ) {
+    return {
+      entryLow: null,
+      entryHigh: null,
+      tp: null,
+    };
+  }
+
+  const analysis =
+    analyzeSupportResistance(
+      srHistory
+    );
+
+  if (
+    !analysis ||
+    !analysis.entryZone
+  ) {
+    return {
+      entryLow: null,
+      entryHigh: null,
+      tp: null,
+    };
+  }
+
+  const entryZone =
+    analysis.entryZone;
+
+  const entryLow =
+    Number.isFinite(
+      entryZone.low
+    )
+      ? entryZone.low
+      : null;
+
+  const entryHigh =
+    Number.isFinite(
+      entryZone.high
+    )
+      ? entryZone.high
+      : null;
+
+  /*
+   * Resistance harus tersedia
+   * agar TP 50% dapat dihitung.
+   */
+  if (
+    !entryZone.resistance
+  ) {
+    return {
+      entryLow,
+      entryHigh,
+      tp: null,
+    };
+  }
+
+  const support =
+    entryZone.support
+      .center;
+
+  const resistance =
+    entryZone.resistance
+      .center;
+
+  if (
+    !Number.isFinite(
+      support
+    ) ||
+    !Number.isFinite(
+      resistance
+    ) ||
+    support <= 0 ||
+    resistance <=
+      support
+  ) {
+    return {
+      entryLow,
+      entryHigh,
+      tp: null,
+    };
+  }
+
+  /*
+   * TP EXACT 50% antara
+   * Support dan Resistance.
+   */
+  const tp =
+    support +
+    (resistance -
+      support) *
+      0.5;
+
+  return {
+    entryLow,
+    entryHigh,
+    tp:
+      Number.isFinite(
+        tp
+      )
+        ? tp
+        : null,
+  };
 }
 
 /* =========================================================
@@ -530,28 +722,326 @@ function buildMarketMap(
 ========================================================= */
 
 function getJakartaDate(): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Jakarta",
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone:
+          "Asia/Jakarta",
 
-    year: "numeric",
+        year: "numeric",
 
-    month: "2-digit",
+        month: "2-digit",
 
-    day: "2-digit",
-  });
+        day: "2-digit",
+      }
+    );
 
-  return formatter.format(new Date()).replace(/-/g, "");
+  return formatter
+    .format(new Date())
+    .replace(
+      /-/g,
+      ""
+    );
 }
 
-function formatDate(value: string): string {
-  if (!value || !/^\d{8}$/.test(value)) {
+/*
+ * Validasi accumulation period
+ * yang tersimpan di Firebase.
+ */
+function isAccumulationPeriod(
+  value: unknown
+): value is AccumulationPeriod {
+  return (
+    value === "1w" ||
+    value === "mtd" ||
+    value === "1m" ||
+    value === "2m" ||
+    value === "3m"
+  );
+}
+
+/*
+ * Convert YYYYMMDD menjadi Date UTC.
+ *
+ * UTC digunakan hanya sebagai media
+ * operasi kalender supaya hasil tidak
+ * terpengaruh timezone server.
+ */
+function parseDateYYYYMMDD(
+  value: string
+): Date {
+  const year =
+    Number(
+      value.slice(
+        0,
+        4
+      )
+    );
+
+  const month =
+    Number(
+      value.slice(
+        4,
+        6
+      )
+    ) - 1;
+
+  const day =
+    Number(
+      value.slice(
+        6,
+        8
+      )
+    );
+
+  return new Date(
+    Date.UTC(
+      year,
+      month,
+      day
+    )
+  );
+}
+
+/*
+ * Convert Date UTC menjadi YYYYMMDD.
+ */
+function formatDateYYYYMMDD(
+  date: Date
+): string {
+  const year =
+    date.getUTCFullYear();
+
+  const month =
+    String(
+      date.getUTCMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  const day =
+    String(
+      date.getUTCDate()
+    ).padStart(
+      2,
+      "0"
+    );
+
+  return (
+    `${year}${month}${day}`
+  );
+}
+
+/*
+ * Kurangi hari kalender.
+ */
+function subtractDays(
+  dateString: string,
+  days: number
+): string {
+  const date =
+    parseDateYYYYMMDD(
+      dateString
+    );
+
+  date.setUTCDate(
+    date.getUTCDate() -
+      days
+  );
+
+  return formatDateYYYYMMDD(
+    date
+  );
+}
+
+/*
+ * Kurangi bulan dengan clamp
+ * ke hari terakhir bulan tujuan.
+ *
+ * Contoh:
+ *
+ * 20260331 - 1 bulan
+ * -> 20260228
+ *
+ * 20240331 - 1 bulan
+ * -> 20240229
+ */
+function subtractMonthsClamped(
+  dateString: string,
+  months: number
+): string {
+  const date =
+    parseDateYYYYMMDD(
+      dateString
+    );
+
+  const originalDay =
+    date.getUTCDate();
+
+  const currentMonth =
+    date.getUTCMonth();
+
+  const currentYear =
+    date.getUTCFullYear();
+
+  const targetMonthIndex =
+    currentMonth -
+    months;
+
+  const targetYear =
+    currentYear +
+    Math.floor(
+      targetMonthIndex /
+        12
+    );
+
+  const normalizedMonth =
+    (
+      targetMonthIndex %
+        12 +
+      12
+    ) % 12;
+
+  const lastDayOfTargetMonth =
+    new Date(
+      Date.UTC(
+        targetYear,
+        normalizedMonth +
+          1,
+        0
+      )
+    ).getUTCDate();
+
+  const targetDay =
+    Math.min(
+      originalDay,
+      lastDayOfTargetMonth
+    );
+
+  return formatDateYYYYMMDD(
+    new Date(
+      Date.UTC(
+        targetYear,
+        normalizedMonth,
+        targetDay
+      )
+    )
+  );
+}
+
+/*
+ * Tentukan from/to berdasarkan
+ * accumulation_period dari Firebase.
+ *
+ * 1w:
+ *   7 hari kalender termasuk hari ini
+ *
+ * mtd:
+ *   tanggal 1 bulan berjalan -> hari ini
+ *
+ * 1m:
+ *   tanggal yang sama bulan lalu -> hari ini
+ *
+ * 2m:
+ *   tanggal yang sama 2 bulan lalu -> hari ini
+ *
+ * 3m:
+ *   tanggal yang sama 3 bulan lalu -> hari ini
+ */
+function getAccumulationPeriodRange(
+  period: AccumulationPeriod
+): {
+  from: string;
+  to: string;
+} {
+  const to =
+    getJakartaDate();
+
+  switch (period) {
+    case "1w":
+      return {
+        from:
+          subtractDays(
+            to,
+            6
+          ),
+
+        to,
+      };
+
+    case "mtd":
+      return {
+        from:
+          `${to.slice(
+            0,
+            6
+          )}01`,
+
+        to,
+      };
+
+    case "1m":
+      return {
+        from:
+          subtractMonthsClamped(
+            to,
+            1
+          ),
+
+        to,
+      };
+
+    case "2m":
+      return {
+        from:
+          subtractMonthsClamped(
+            to,
+            2
+          ),
+
+        to,
+      };
+
+    case "3m":
+      return {
+        from:
+          subtractMonthsClamped(
+            to,
+            3
+          ),
+
+        to,
+      };
+  }
+}
+
+function formatDate(
+  value: string
+): string {
+  if (
+    !value ||
+    !/^\d{8}$/.test(
+      value
+    )
+  ) {
     return value;
   }
 
   return (
-    `${value.slice(6, 8)}/` +
-    `${value.slice(4, 6)}/` +
-    `${value.slice(0, 4)}`
+    `${value.slice(
+      6,
+      8
+    )}/` +
+    `${value.slice(
+      4,
+      6
+    )}/` +
+    `${value.slice(
+      0,
+      4
+    )}`
   );
 }
 
@@ -563,110 +1053,114 @@ function formatNumber(
   value: number,
   maximumFractionDigits = 2
 ): string {
-  return new Intl.NumberFormat("id-ID", {
-    maximumFractionDigits,
-  }).format(value);
+  return new Intl.NumberFormat(
+    "id-ID",
+    {
+      maximumFractionDigits,
+    }
+  ).format(value);
 }
 
 /* =========================================================
    COMPACT NUMBER FORMAT
-=========================================================
-
-   Contoh:
-
-   3920
-   -> 3,92k
-
-   392800
-   -> 392,8k
-
-   5000000
-   -> 5M
-
-   3200000000
-   -> 3,2B
 ========================================================= */
 
 function formatCompactNumber(
   value: number,
   maximumFractionDigits = 2
 ): string {
-  if (!Number.isFinite(value)) {
+  if (
+    !Number.isFinite(
+      value
+    )
+  ) {
     return "0";
   }
 
-  const absolute = Math.abs(value);
+  const absolute =
+    Math.abs(value);
 
-  const sign = value < 0 ? "-" : "";
+  const sign =
+    value < 0
+      ? "-"
+      : "";
 
-  if (absolute >= 1_000_000_000_000) {
+  if (
+    absolute >=
+    1_000_000_000_000
+  ) {
     return (
       sign +
       formatNumber(
-        absolute / 1_000_000_000_000,
+        absolute /
+          1_000_000_000_000,
         maximumFractionDigits
       ) +
       "T"
     );
   }
 
-  if (absolute >= 1_000_000_000) {
+  if (
+    absolute >=
+    1_000_000_000
+  ) {
     return (
       sign +
       formatNumber(
-        absolute / 1_000_000_000,
+        absolute /
+          1_000_000_000,
         maximumFractionDigits
       ) +
       "B"
     );
   }
 
-  if (absolute >= 1_000_000) {
+  if (
+    absolute >=
+    1_000_000
+  ) {
     return (
       sign +
       formatNumber(
-        absolute / 1_000_000,
+        absolute /
+          1_000_000,
         maximumFractionDigits
       ) +
       "M"
     );
   }
 
-  if (absolute >= 1_000) {
+  if (
+    absolute >=
+    1_000
+  ) {
     return (
       sign +
       formatNumber(
-        absolute / 1_000,
+        absolute /
+          1_000,
         maximumFractionDigits
       ) +
-      "k"
+      "K"
     );
   }
 
-  return formatNumber(value, maximumFractionDigits);
+  return formatNumber(
+    value,
+    maximumFractionDigits
+  );
 }
 
-/* =========================================================
-   MARKET VALUE FORMAT
-========================================================= */
-
-function formatMarketValue(
-  valueTrillion: number
+function formatSignedPercent(
+  value: number
 ): string {
-  if (!Number.isFinite(valueTrillion)) {
-    return "0";
-  }
+  const absolute =
+    Math.abs(value);
 
-  const rupiahValue =
-    valueTrillion * 1_000_000_000_000;
-
-  return formatCompactNumber(rupiahValue, 2);
-}
-
-function formatSignedPercent(value: number): string {
-  const absolute = Math.abs(value);
-
-  const formatted = formatNumber(absolute);
+  const formatted =
+    formatNumber(
+      absolute
+    );
 
   if (value > 0) {
     return `+${formatted}%`;
@@ -683,12 +1177,26 @@ function formatSignedPercent(value: number): string {
    HTML ESCAPE
 ========================================================= */
 
-function escapeHtml(value: string): string {
+function escapeHtml(
+  value: string
+): string {
   return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    );
 }
 
 /* =========================================================
@@ -703,11 +1211,19 @@ function buildSignalHeader(
   return (
     `🚨 TRADE SIGNAL\n\n` +
     `🏢 Broker Accumulator\n` +
-    `${escapeHtml(config.broker_code)} — ` +
-    `${escapeHtml(config.broker_name)}\n\n` +
+    `${escapeHtml(
+      config.broker_code
+    )} — ` +
+    `${escapeHtml(
+      config.broker_name
+    )}\n\n` +
     `📅 Periode\n` +
-    `${formatDate(from)} — ` +
-    `${formatDate(to)}\n\n` +
+    `${formatDate(
+      from
+    )} — ` +
+    `${formatDate(
+      to
+    )}\n\n` +
     `━━━━━━━━━━━━━━━━━━`
   );
 }
@@ -719,29 +1235,77 @@ function buildSignalHeader(
 function buildSignalBlock(
   row: TradeSignalRow
 ): string {
-  const symbol = escapeHtml(row.symbol);
+  const symbol =
+    escapeHtml(
+      row.symbol
+    );
 
   const stockbitUrl =
     `https://stockbit.com/#/symbol/` +
-    encodeURIComponent(row.symbol);
+    encodeURIComponent(
+      row.symbol
+    );
+
+  const entryArea =
+    row.entryLow !==
+      null &&
+    row.entryHigh !==
+      null
+      ? `${formatNumber(
+          row.entryLow
+        )} — ${formatNumber(
+          row.entryHigh
+        )}`
+      : "-";
+
+  const tp =
+    row.tp !== null
+      ? formatNumber(
+          row.tp
+        )
+      : "-";
 
   return (
     `📌 <a href="${stockbitUrl}">${symbol}</a>\n\n` +
 
     `🔥 Accumulation: ` +
-    `${formatSignedPercent(row.accumulation)}\n` +
+    `${formatSignedPercent(
+      row.accumulation
+    )}\n` +
 
     `⚡ Rate: ` +
-    `${formatNumber(row.accumulation_rate)}%\n` +
+    `${formatNumber(
+      row.accumulation_rate
+    )}%\n` +
 
+    /*
+     * Last Price SEKARANG dari Firestore history.close.
+     */
     `📊 Last Price: ` +
-    `${formatNumber(row.last_close)}\n` +
+    `${formatNumber(
+      row.historyClose
+    )}\n` +
 
+    /*
+     * Volume sudah scaled × 0.01.
+     */
     `📦 Volume: ` +
-    `${formatCompactNumber(row.marketVolume)}\n` +
+    `${formatCompactNumber(
+      row.marketVolume
+    )}\n` +
 
-    `📈 Volume Ratio: ` +
-    `${formatNumber(row.volumeRatio, 2)}x\n\n` +
+    /*
+     * Entry Area hasil Support/Resistance engine.
+     */
+    `🎯 Entry Area: ` +
+    `${entryArea}\n` +
+
+    /*
+     * TP = 50% antara center Support
+     * dan center Resistance.
+     */
+    `🏁 TP: ` +
+    `${tp}\n\n` +
 
     `━━━━━━━━━━━━━━━━━━`
   );
@@ -763,56 +1327,81 @@ function buildSignalChunks(
   from: string,
   to: string
 ): SignalChunk[] {
-  const header = buildSignalHeader(
-    config,
-    from,
-    to
-  );
+  const header =
+    buildSignalHeader(
+      config,
+      from,
+      to
+    );
 
-  const chunks: SignalChunk[] = [];
+  const chunks: SignalChunk[] =
+    [];
 
-  let currentRows: TradeSignalRow[] = [];
+  let currentRows:
+    TradeSignalRow[] = [];
 
-  let currentMessage = header;
+  let currentMessage =
+    header;
 
-  for (const row of rows) {
+  for (
+    const row of rows
+  ) {
     const block =
       `\n\n` +
-      buildSignalBlock(row);
+      buildSignalBlock(
+        row
+      );
 
     if (
       currentMessage.length +
         block.length <=
       TELEGRAM_MAX_LENGTH
     ) {
-      currentRows.push(row);
+      currentRows.push(
+        row
+      );
 
-      currentMessage += block;
+      currentMessage +=
+        block;
 
       continue;
     }
 
-    if (currentRows.length > 0) {
+    if (
+      currentRows.length >
+      0
+    ) {
       chunks.push({
-        rows: currentRows,
+        rows:
+          currentRows,
 
-        message: currentMessage,
+        message:
+          currentMessage,
       });
     }
 
-    currentRows = [row];
+    currentRows = [
+      row,
+    ];
 
     currentMessage =
       header +
       `\n\n` +
-      buildSignalBlock(row);
+      buildSignalBlock(
+        row
+      );
   }
 
-  if (currentRows.length > 0) {
+  if (
+    currentRows.length >
+    0
+  ) {
     chunks.push({
-      rows: currentRows,
+      rows:
+        currentRows,
 
-      message: currentMessage,
+      message:
+        currentMessage,
     });
   }
 
@@ -826,10 +1415,17 @@ function buildSignalChunks(
 async function getEnabledTradePlanes(): Promise<
   TradePlaneDocument[]
 > {
-  const snapshot = await db
-    .collection("trade-plane")
-    .where("enabled", "==", true)
-    .get();
+  const snapshot =
+    await db
+      .collection(
+        "trade-plane"
+      )
+      .where(
+        "enabled",
+        "==",
+        true
+      )
+      .get();
 
   return snapshot.docs
     .map((doc) => {
@@ -840,52 +1436,82 @@ async function getEnabledTradePlanes(): Promise<
        * broker_id diambil langsung
        * dari Firestore.
        *
-       * TIDAK ADA mapping hard-code.
+       * Tidak ada mapping hard-code.
        */
 
       if (
-        typeof data.broker_id !== "number" ||
-        !Number.isInteger(data.broker_id) ||
+        typeof data.broker_id !==
+          "number" ||
+        !Number.isInteger(
+          data.broker_id
+        ) ||
         data.broker_id <= 0
       ) {
         console.error(
           "[TRADE PLANE] Invalid broker_id:",
           {
-            uid: doc.id,
+            uid:
+              doc.id,
 
-            broker_id: data.broker_id,
+            broker_id:
+              data.broker_id,
           }
         );
 
         return null;
       }
 
-      return {
-        uid: doc.id,
+      /*
+       * Ambil accumulation_period
+       * dari Firebase.
+       *
+       * Kalau field belum ada atau
+       * nilainya tidak valid, gunakan
+       * MTD sebagai fallback.
+       */
+      const accumulationPeriod =
+        isAccumulationPeriod(
+          data.accumulation_period
+        )
+          ? data.accumulation_period
+          : "mtd";
 
-        enabled: true,
+      return {
+        uid:
+          doc.id,
+
+        enabled:
+          true,
 
         broker_code:
-          typeof data.broker_code === "string"
+          typeof data.broker_code ===
+          "string"
             ? data.broker_code
             : "",
 
-        broker_id: data.broker_id,
+        broker_id:
+          data.broker_id,
 
         broker_name:
-          typeof data.broker_name === "string"
+          typeof data.broker_name ===
+          "string"
             ? data.broker_name
             : "",
 
         destination_type:
-          data.destination_type === "whatsapp"
+          data.destination_type ===
+          "whatsapp"
             ? "whatsapp"
             : "telegram",
 
         destination_target:
-          typeof data.destination_target === "string"
+          typeof data.destination_target ===
+          "string"
             ? data.destination_target
             : "",
+
+        accumulation_period:
+          accumulationPeriod,
       };
     })
     .filter(
@@ -906,22 +1532,47 @@ async function claimSignal(
   from: string,
   to: string
 ): Promise<boolean> {
+  /*
+   * from + to sengaja dimasukkan ke ID.
+   *
+   * Jadi:
+   *
+   * CC + BBCA + 1W
+   *
+   * tidak bentrok dengan:
+   *
+   * CC + BBCA + 1M
+   *
+   * pada tanggal to yang sama.
+   */
   const signalId =
     `${config.uid}_` +
     `${config.broker_id}_` +
     `${row.symbol}_` +
+    `${from}_` +
     `${to}`;
 
-  const ref = db
-    .collection(SIGNAL_COLLECTION)
-    .doc(signalId);
+  const ref =
+    db
+      .collection(
+        SIGNAL_COLLECTION
+      )
+      .doc(
+        signalId
+      );
 
   return db.runTransaction(
-    async (transaction) => {
+    async (
+      transaction
+    ) => {
       const snapshot =
-        await transaction.get(ref);
+        await transaction.get(
+          ref
+        );
 
-      if (snapshot.exists) {
+      if (
+        snapshot.exists
+      ) {
         const data =
           snapshot.data() as Partial<SignalDocument>;
 
@@ -929,7 +1580,10 @@ async function claimSignal(
          * Jangan kirim ulang
          * kalau sudah sent.
          */
-        if (data.status === "sent") {
+        if (
+          data.status ===
+          "sent"
+        ) {
           return false;
         }
 
@@ -938,42 +1592,52 @@ async function claimSignal(
          * ketika status masih sending.
          */
         if (
-          data.status === "sending" &&
+          data.status ===
+            "sending" &&
           data.updatedAt
         ) {
           const updatedAtValue =
             data.updatedAt;
 
           let updatedAtMs:
-            number | null = null;
+            | number
+            | null = null;
 
           if (
-            updatedAtValue instanceof Date
+            updatedAtValue instanceof
+            Date
           ) {
             updatedAtMs =
               updatedAtValue.getTime();
           } else if (
             typeof updatedAtValue ===
               "object" &&
-            updatedAtValue !== null &&
-            "toDate" in updatedAtValue &&
+            updatedAtValue !==
+              null &&
+            "toDate" in
+              updatedAtValue &&
             typeof (
               updatedAtValue as {
                 toDate?: unknown;
               }
-            ).toDate === "function"
+            ).toDate ===
+              "function"
           ) {
             updatedAtMs =
               (
                 updatedAtValue as {
                   toDate: () => Date;
                 }
-              ).toDate().getTime();
+              )
+                .toDate()
+                .getTime();
           }
 
           if (
-            updatedAtMs !== null &&
-            Date.now() - updatedAtMs <
+            updatedAtMs !==
+              null &&
+            Date.now() -
+              updatedAtMs <
               SENDING_TIMEOUT_MS
           ) {
             return false;
@@ -981,57 +1645,70 @@ async function claimSignal(
         }
       }
 
-      const signalData: SignalDocument = {
-        uid: config.uid,
+      /*
+       * PENTING:
+       *
+       * entryLow
+       * entryHigh
+       * tp
+       *
+       * TIDAK dimasukkan.
+       *
+       * Jadi Firestore schema lama
+       * tetap sama.
+       */
+      const signalData:
+        SignalDocument = {
+        uid:
+          config.uid,
 
-        symbol: row.symbol,
+        symbol:
+          row.symbol,
 
-        brokerId: config.broker_id,
+        brokerId:
+          config.broker_id,
 
-        brokerCode: config.broker_code,
+        brokerCode:
+          config.broker_code,
 
-        brokerName: config.broker_name,
+        brokerName:
+          config.broker_name,
 
-        accumulation: row.accumulation,
+        accumulation:
+          row.accumulation,
 
         accumulationRate:
           row.accumulation_rate,
 
-        lastClose: row.last_close,
+        /*
+         * LAST PRICE DARI FIRESTORE
+         */
+        lastClose:
+          row.historyClose,
 
-        ma20: row.ma20,
+        ma20:
+          row.ma20,
 
         /*
-         * MARKET VOLUME
-         *
-         * BUKAN row.volume.
-         *
-         * row.volume pada AxentrazResult
-         * adalah data broker.
+         * Volume yang disimpan adalah
+         * volume setelah scaling × 0.01.
          */
-        volume: row.marketVolume,
-
-        volumeRatio: row.volumeRatio,
-
-        valueTrillion:
-          row.valueTrillion,
-
-        volSurge: row.volSurge,
+        volume:
+          row.marketVolume,
 
         from,
 
         to,
 
-        status: "sending",
+        status:
+          "sending",
 
         createdAt:
           snapshot.exists
-            ? (
-                snapshot
-                  .data()
-                  ?.createdAt ??
-                FieldValue.serverTimestamp()
-              )
+            ? snapshot
+                .data()
+                ?.createdAt ??
+              FieldValue.serverTimestamp()
             : FieldValue.serverTimestamp(),
 
         updatedAt:
@@ -1042,7 +1719,8 @@ async function claimSignal(
         ref,
         signalData,
         {
-          merge: true,
+          merge:
+            true,
         }
       );
 
@@ -1058,19 +1736,32 @@ async function claimSignal(
 async function updateSignalStatus(
   config: TradePlaneDocument,
   row: TradeSignalRow,
+  from: string,
   to: string,
   status: SignalStatus,
-  extra: Record<string, unknown> = {}
+  extra: Record<
+    string,
+    unknown
+  > = {}
 ) {
+  /*
+   * Harus sama persis dengan
+   * signalId di claimSignal().
+   */
   const signalId =
     `${config.uid}_` +
     `${config.broker_id}_` +
     `${row.symbol}_` +
+    `${from}_` +
     `${to}`;
 
   await db
-    .collection(SIGNAL_COLLECTION)
-    .doc(signalId)
+    .collection(
+      SIGNAL_COLLECTION
+    )
+    .doc(
+      signalId
+    )
     .set(
       {
         status,
@@ -1081,7 +1772,8 @@ async function updateSignalStatus(
         ...extra,
       },
       {
-        merge: true,
+        merge:
+          true,
       }
     );
 }
@@ -1120,16 +1812,29 @@ async function processTradePlane(
   config: TradePlaneDocument,
   from: string,
   to: string,
-  marketMap: Map<string, MarketData>
+  historyCache: Map<
+    string,
+    StockHistoryData[]
+  >
 ) {
   console.log(
     "[TRADE PLANE] Processing:",
     {
-      uid: config.uid,
+      uid:
+        config.uid,
 
-      broker: config.broker_code,
+      broker:
+        config.broker_code,
 
-      brokerId: config.broker_id,
+      brokerId:
+        config.broker_id,
+
+      accumulationPeriod:
+        config.accumulation_period,
+
+      from,
+
+      to,
 
       destination:
         config.destination_type,
@@ -1166,12 +1871,55 @@ async function processTradePlane(
           row.ma20
     );
 
+  /*
+   * Ambil hanya symbol yang belum ada di cache.
+   */
+  const missingSymbols =
+    candidates
+      .map(
+        (row) =>
+          row.symbol
+            .trim()
+            .toUpperCase()
+      )
+      .filter(
+        (symbol) =>
+          symbol &&
+          !historyCache.has(
+            symbol
+          )
+      );
+
+  if (
+    missingSymbols.length >
+    0
+  ) {
+    const histories =
+      await getStockHistories(
+        missingSymbols
+      );
+
+    for (
+      const [
+        symbol,
+        history,
+      ] of histories
+    ) {
+      historyCache.set(
+        symbol,
+        history
+      );
+    }
+  }
+
   console.log(
     "[TRADE PLANE] Candidates:",
     {
-      uid: config.uid,
+      uid:
+        config.uid,
 
-      broker: config.broker_code,
+      broker:
+        config.broker_code,
 
       qualified:
         result.data.length,
@@ -1182,32 +1930,43 @@ async function processTradePlane(
   );
 
   /* =====================================================
-     3. MATCH DENGAN MARKET INTELLIGENCE
+     3. MATCH DENGAN STOCK HISTORY
   ===================================================== */
 
-  const signals: TradeSignalRow[] = [];
+  const signals:
+    TradeSignalRow[] = [];
 
-  let missingMarketData = 0;
+  let missingMarketData =
+    0;
 
   let lowVolume = 0;
 
-  for (const row of candidates) {
+  let invalidSR = 0;
+
+  for (
+    const row of candidates
+  ) {
     const symbol =
       row.symbol
         .trim()
         .toUpperCase();
 
-    const market =
-      marketMap.get(symbol);
+    const history =
+      historyCache.get(
+        symbol
+      );
 
     /*
-     * Tidak ditemukan di snapshot.
+     * Tidak ditemukan history.
      */
-    if (!market) {
+    if (
+      !history ||
+      history.length === 0
+    ) {
       missingMarketData++;
 
       console.log(
-        "[TRADE PLANE] Market data missing:",
+        "[TRADE PLANE] Stock history missing:",
         symbol
       );
 
@@ -1215,50 +1974,82 @@ async function processTradePlane(
     }
 
     /*
-     * ===================================================
-     * VOLUME DEBUG
-     * ===================================================
+     * Ambil candle TERBARU.
+     *
+     * getStockHistory()
+     * sudah mengembalikan data ASC.
      */
+    const latest =
+      history[
+        history.length - 1
+      ];
+
+    /* =================================================
+       RAW VOLUME FIRESTORE
+    ================================================= */
+
+    const rawVolume =
+      toNumber(
+        latest.volume
+      );
+
+    /* =================================================
+       SCALED VOLUME
+    ================================================= */
+
+    const volume =
+      rawVolume *
+      MARKET_VOLUME_SCALE;
+
+    /* =================================================
+       LAST PRICE DARI FIRESTORE
+    ================================================= */
+
+    const historyClose =
+      toNumber(
+        latest.close
+      );
 
     console.log(
-      "[TRADE PLANE] MARKET VOLUME CHECK:",
+      "[TRADE PLANE] STOCK HISTORY CHECK:",
       {
         symbol,
 
-        rawVolume:
-          market.rawVolume,
+        date:
+          latest.date,
 
-        normalizedVolume:
-          market.volume,
+        rawVolume,
 
-        compact:
+        scale:
+          MARKET_VOLUME_SCALE,
+
+        scaledVolume:
+          volume,
+
+        compactVolume:
           formatCompactNumber(
-            market.volume
+            volume
           ),
+
+        historyClose,
 
         threshold:
           MIN_MARKET_VOLUME,
 
         passed:
-          market.volume >
+          volume >
           MIN_MARKET_VOLUME,
+
+        historyRows:
+          history.length,
       }
     );
 
     /*
-     * ===================================================
-     * FILTER VOLUME
-     * ===================================================
-     *
      * HARUS LEBIH BESAR DARI 50K.
-     *
-     * 49,999 -> reject
-     * 50,000 -> reject
-     * 50,001 -> lolos
      */
-
     if (
-      market.volume <=
+      volume <=
       MIN_MARKET_VOLUME
     ) {
       lowVolume++;
@@ -1268,12 +2059,14 @@ async function processTradePlane(
         {
           symbol,
 
-          normalizedVolume:
-            market.volume,
+          rawVolume,
+
+          scaledVolume:
+            volume,
 
           compact:
             formatCompactNumber(
-              market.volume
+              volume
             ),
 
           threshold:
@@ -1285,42 +2078,145 @@ async function processTradePlane(
     }
 
     /*
-     * Gabungkan data broker
-     * dengan data market.
-     *
-     * AxentrazResult TIDAK diubah.
+     * Kalau close tidak valid,
+     * jangan kirim signal.
      */
-    const signal: TradeSignalRow = {
+    if (
+      historyClose <= 0
+    ) {
+      console.log(
+        "[TRADE PLANE] REJECT INVALID CLOSE:",
+        {
+          symbol,
+
+          historyClose,
+
+          date:
+            latest.date,
+        }
+      );
+
+      continue;
+    }
+
+    /* =================================================
+       SUPPORT / RESISTANCE
+    ================================================= */
+
+    const entryTarget =
+      calculateEntryTarget(
+        history
+      );
+
+    /*
+     * Kalau engine tidak menemukan
+     * Entry Area, signal tetap boleh
+     * diproses karena filter existing
+     * tidak berubah.
+     *
+     * Telegram akan menampilkan "-"
+     * untuk Entry Area / TP.
+     *
+     * Jadi S/R TIDAK menjadi filter
+     * baru yang bisa menghilangkan
+     * signal existing.
+     */
+    if (
+      entryTarget.entryLow ===
+        null ||
+      entryTarget.entryHigh ===
+        null
+    ) {
+      invalidSR++;
+
+      console.log(
+        "[TRADE PLANE] S/R unavailable:",
+        {
+          symbol,
+
+          historyRows:
+            history.length,
+
+          historyClose,
+
+          entryLow:
+            entryTarget.entryLow,
+
+          entryHigh:
+            entryTarget.entryHigh,
+
+          tp:
+            entryTarget.tp,
+        }
+      );
+    } else {
+      console.log(
+        "[TRADE PLANE] S/R RESULT:",
+        {
+          symbol,
+
+          entryLow:
+            entryTarget.entryLow,
+
+          entryHigh:
+            entryTarget.entryHigh,
+
+          tp:
+            entryTarget.tp,
+        }
+      );
+    }
+
+    const signal:
+      TradeSignalRow = {
       ...row,
 
+      /*
+       * Volume dari Firestore
+       * setelah × 0.01.
+       */
       marketVolume:
-        market.volume,
+        volume,
 
-      volumeRatio:
-        market.volumeRatio,
+      /*
+       * Last Price dari
+       * Firestore history.close.
+       */
+      historyClose,
 
-      valueTrillion:
-        market.valueTrillion,
+      /*
+       * Entry Area:
+       * hanya transient.
+       */
+      entryLow:
+        entryTarget.entryLow,
 
-      volSurge:
-        market.volSurge,
+      entryHigh:
+        entryTarget.entryHigh,
 
-      marketPrice:
-        market.price,
-
-      marketChangePct:
-        market.changePct,
+      /*
+       * TP:
+       * hanya transient.
+       *
+       * TIDAK masuk Firestore.
+       */
+      tp:
+        entryTarget.tp,
     };
 
-    signals.push(signal);
+    signals.push(
+      signal
+    );
   }
 
   console.log(
     "[TRADE PLANE] Signals:",
     {
-      uid: config.uid,
+      uid:
+        config.uid,
 
-      broker: config.broker_code,
+      broker:
+        config.broker_code,
 
       qualified:
         result.data.length,
@@ -1334,6 +2230,8 @@ async function processTradePlane(
       missingMarketData,
 
       lowVolume,
+
+      invalidSR,
     }
   );
 
@@ -1341,9 +2239,12 @@ async function processTradePlane(
      NO SIGNAL
   ===================================================== */
 
-  if (signals.length === 0) {
+  if (
+    signals.length === 0
+  ) {
     return {
-      uid: config.uid,
+      uid:
+        config.uid,
 
       broker_id:
         config.broker_id,
@@ -1353,6 +2254,9 @@ async function processTradePlane(
 
       broker_name:
         config.broker_name,
+
+      accumulation_period:
+        config.accumulation_period,
 
       destination_type:
         config.destination_type,
@@ -1367,15 +2271,20 @@ async function processTradePlane(
       candidates:
         candidates.length,
 
-      signals: 0,
+      signals:
+        0,
 
-      sent: 0,
+      sent:
+        0,
 
       missing_market_data:
         missingMarketData,
 
       low_volume:
         lowVolume,
+
+      invalid_sr:
+        invalidSR,
 
       symbols: [],
     };
@@ -1385,9 +2294,12 @@ async function processTradePlane(
      4. CLAIM SIGNAL
   ===================================================== */
 
-  const newSignals: TradeSignalRow[] = [];
+  const newSignals:
+    TradeSignalRow[] = [];
 
-  for (const row of signals) {
+  for (
+    const row of signals
+  ) {
     const claimed =
       await claimSignal(
         config,
@@ -1397,7 +2309,9 @@ async function processTradePlane(
       );
 
     if (claimed) {
-      newSignals.push(row);
+      newSignals.push(
+        row
+      );
     }
   }
 
@@ -1405,9 +2319,13 @@ async function processTradePlane(
      ALL ALREADY SENT
   ===================================================== */
 
-  if (newSignals.length === 0) {
+  if (
+    newSignals.length ===
+    0
+  ) {
     return {
-      uid: config.uid,
+      uid:
+        config.uid,
 
       broker_id:
         config.broker_id,
@@ -1417,6 +2335,9 @@ async function processTradePlane(
 
       broker_name:
         config.broker_name,
+
+      accumulation_period:
+        config.accumulation_period,
 
       destination_type:
         config.destination_type,
@@ -1434,7 +2355,8 @@ async function processTradePlane(
       signals:
         signals.length,
 
-      sent: 0,
+      sent:
+        0,
 
       symbols: [],
 
@@ -1458,7 +2380,8 @@ async function processTradePlane(
   console.log(
     "[TRADE PLANE] Message chunks:",
     {
-      uid: config.uid,
+      uid:
+        config.uid,
 
       broker:
         config.broker_code,
@@ -1471,9 +2394,11 @@ async function processTradePlane(
     }
   );
 
-  let totalSent = 0;
+  let totalSent =
+    0;
 
-  const sentSymbols: string[] = [];
+  const sentSymbols:
+    string[] = [];
 
   /* =====================================================
      6. SEND CHUNKS
@@ -1484,12 +2409,14 @@ async function processTradePlane(
     index < chunks.length;
     index++
   ) {
-    const chunk = chunks[index];
+    const chunk =
+      chunks[index];
 
     console.log(
       "[TRADE PLANE] Sending chunk:",
       {
-        uid: config.uid,
+        uid:
+          config.uid,
 
         broker:
           config.broker_code,
@@ -1517,10 +2444,13 @@ async function processTradePlane(
       /*
        * MARK SENT
        */
-      for (const row of chunk.rows) {
+      for (
+        const row of chunk.rows
+      ) {
         await updateSignalStatus(
           config,
           row,
+          from,
           to,
           "sent",
           {
@@ -1543,14 +2473,18 @@ async function processTradePlane(
       }
     } catch (error) {
       const errorMessage =
-        error instanceof Error
+        error instanceof
+        Error
           ? error.message
-          : String(error);
+          : String(
+              error
+            );
 
       console.error(
         "[TRADE PLANE] Chunk failed:",
         {
-          uid: config.uid,
+          uid:
+            config.uid,
 
           broker:
             config.broker_code,
@@ -1566,10 +2500,13 @@ async function processTradePlane(
       /*
        * MARK FAILED
        */
-      for (const row of chunk.rows) {
+      for (
+        const row of chunk.rows
+      ) {
         await updateSignalStatus(
           config,
           row,
+          from,
           to,
           "failed",
           {
@@ -1591,7 +2528,8 @@ async function processTradePlane(
   ===================================================== */
 
   return {
-    uid: config.uid,
+    uid:
+      config.uid,
 
     broker_id:
       config.broker_id,
@@ -1601,6 +2539,9 @@ async function processTradePlane(
 
     broker_name:
       config.broker_name,
+
+    accumulation_period:
+      config.accumulation_period,
 
     destination_type:
       config.destination_type,
@@ -1633,16 +2574,37 @@ async function processTradePlane(
     low_volume:
       lowVolume,
 
+    invalid_sr:
+      invalidSR,
+
     symbols:
       sentSymbols,
   };
 }
 
 /* =========================================================
-   CRON SECRET
+   AUTH / SYNC SECRET
+=========================================================
+
+   Bisa dipanggil dengan salah satu:
+
+   1. Manual PowerShell:
+      x-sync-secret
+
+   2. Vercel / cron:
+      Authorization: Bearer <CRON_SECRET>
+
+   3. Manual alternatif:
+      x-cron-secret
+
+   Environment yang didukung:
+   - SYNC_SECRET  -> utama untuk manual sync
+   - CRON_SECRET  -> fallback untuk cron/Vercel
+
+   Jangan hard-code secret di source code.
 ========================================================= */
 
-function getCronSecret(
+function getRequestSecret(
   request: NextRequest
 ): string {
   const authorization =
@@ -1660,11 +2622,65 @@ function getCronSecret(
       .trim();
   }
 
-  return (
+  const syncSecret =
+    request.headers.get(
+      "x-sync-secret"
+    );
+
+  if (
+    syncSecret?.trim()
+  ) {
+    return syncSecret
+      .trim();
+  }
+
+  const cronSecret =
     request.headers.get(
       "x-cron-secret"
-    ) ?? ""
+    );
+
+  return (
+    cronSecret ?? ""
   ).trim();
+}
+
+function isAuthorized(
+  request: NextRequest
+): boolean {
+  const requestSecret =
+    getRequestSecret(
+      request
+    );
+
+  if (!requestSecret) {
+    return false;
+  }
+
+  const syncSecret =
+    process.env.SYNC_SECRET?.trim();
+
+  const cronSecret =
+    process.env.CRON_SECRET?.trim();
+
+  /*
+   * SYNC_SECRET menjadi secret utama
+   * untuk endpoint sync manual.
+   *
+   * CRON_SECRET tetap diterima supaya
+   * Vercel Cron tidak rusak.
+   */
+  return (
+    (
+      Boolean(syncSecret) &&
+      requestSecret ===
+        syncSecret
+    ) ||
+    (
+      Boolean(cronSecret) &&
+      requestSecret ===
+        cronSecret
+    )
+  );
 }
 
 /* =========================================================
@@ -1676,21 +2692,13 @@ export async function GET(
 ) {
   try {
     /* =====================================================
-       AUTH CRON
+       AUTH
     ===================================================== */
 
-    const cronSecret =
-      process.env.CRON_SECRET;
-
-    const requestSecret =
-      getCronSecret(
-        request
-      );
-
     if (
-      !cronSecret ||
-      requestSecret !==
-        cronSecret
+      !isAuthorized(
+        request
+      )
     ) {
       return NextResponse.json(
         {
@@ -1701,56 +2709,11 @@ export async function GET(
             "Unauthorized",
         },
         {
-          status: 401,
+          status:
+            401,
         }
       );
     }
-
-    /* =====================================================
-       DATE
-    ===================================================== */
-
-    const today =
-      getJakartaDate();
-
-    const from =
-      `${today.slice(0, 6)}01`;
-
-    const to =
-      today;
-
-    /* =====================================================
-       GET MARKET INTELLIGENCE
-
-       HANYA SEKALI.
-
-       Snapshot dipakai oleh semua broker.
-    ===================================================== */
-
-    const marketRows =
-      await getMarketIntelligenceSnapshot();
-
-    const marketMap =
-      buildMarketMap(
-        marketRows
-      );
-
-    console.log(
-      "[SYNC SIGNAL] Market Intelligence:",
-      {
-        rows:
-          marketRows.length,
-
-        map:
-          marketMap.size,
-
-        volumeScale:
-          MARKET_VOLUME_SCALE,
-
-        minVolume:
-          MIN_MARKET_VOLUME,
-      }
-    );
 
     /* =====================================================
        ENABLED TRADE PLANES
@@ -1764,11 +2727,32 @@ export async function GET(
       tradePlanes.length
     );
 
-    const results: Array<
-      Record<string, unknown>
-    > = [];
+    /*
+     * Cache history dipakai bersama semua broker
+     * dalam 1 request.
+     *
+     * Kandidat saham yang sama tidak akan query
+     * Firestore dua kali.
+     *
+     * Sekarang setiap cache berisi sampai
+     * 120 candle untuk S/R.
+     */
+    const historyCache =
+      new Map<
+        string,
+        StockHistoryData[]
+      >();
 
-    let sent = 0;
+    const results:
+      Array<
+        Record<
+          string,
+          unknown
+        >
+      > = [];
+
+    let sent =
+      0;
 
     /* =====================================================
        PROCESS ALL ENABLED TRADE PLANES
@@ -1778,12 +2762,45 @@ export async function GET(
       const config of tradePlanes
     ) {
       try {
+        /*
+         * Tentukan range berdasarkan
+         * setting Firebase masing-masing user.
+         */
+        const {
+          from,
+          to,
+        } =
+          getAccumulationPeriodRange(
+            config.accumulation_period
+          );
+
+        console.log(
+          "[SYNC SIGNAL] Accumulation period:",
+          {
+            uid:
+              config.uid,
+
+            broker:
+              config.broker_code,
+
+            brokerId:
+              config.broker_id,
+
+            period:
+              config.accumulation_period,
+
+            from,
+
+            to,
+          }
+        );
+
         const result =
           await processTradePlane(
             config,
             from,
             to,
-            marketMap
+            historyCache
           );
 
         results.push(
@@ -1796,9 +2813,12 @@ export async function GET(
         error
       ) {
         const errorMessage =
-          error instanceof Error
+          error instanceof
+          Error
             ? error.message
-            : String(error);
+            : String(
+                error
+              );
 
         console.error(
           "[SYNC SIGNAL] Failed:",
@@ -1811,6 +2831,9 @@ export async function GET(
 
             brokerId:
               config.broker_id,
+
+            accumulationPeriod:
+              config.accumulation_period,
 
             error:
               errorMessage,
@@ -1830,12 +2853,11 @@ export async function GET(
           broker_name:
             config.broker_name,
 
+          accumulation_period:
+            config.accumulation_period,
+
           destination_type:
             config.destination_type,
-
-          from,
-
-          to,
 
           success:
             false,
@@ -1857,15 +2879,11 @@ export async function GET(
       message:
         "Trade Plane signal sync selesai.",
 
-      from,
+      today:
+        getJakartaDate(),
 
-      to,
-
-      market_rows:
-        marketRows.length,
-
-      market_symbols:
-        marketMap.size,
+      history_symbols:
+        historyCache.size,
 
       enabled_users:
         tradePlanes.length,
@@ -1891,12 +2909,16 @@ export async function GET(
           false,
 
         error:
-          error instanceof Error
+          error instanceof
+          Error
             ? error.message
-            : String(error),
+            : String(
+                error
+              ),
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }

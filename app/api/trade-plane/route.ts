@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuth } from "firebase-admin/auth";
 import { db } from "@/lib/firebase-admin";
 
-type DestinationType = "telegram" | "whatsapp";
+type DestinationType = "telegram";
+
+type AccumulationPeriod =
+  | "1w"
+  | "mtd"
+  | "1m"
+  | "2m"
+  | "3m";
 
 type TradePlaneConfig = {
   enabled: boolean;
@@ -11,8 +18,20 @@ type TradePlaneConfig = {
   broker_name: string;
   destination_type: DestinationType;
   destination_target: string;
+  accumulation_period: AccumulationPeriod;
   updatedAt: Date;
 };
+
+/* =========================================================
+   DEFAULT
+========================================================= */
+
+const DEFAULT_ACCUMULATION_PERIOD: AccumulationPeriod =
+  "mtd";
+
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function getToken(request: NextRequest) {
   const authorization =
@@ -48,6 +67,22 @@ async function authenticate(
   return decoded;
 }
 
+function normalizeAccumulationPeriod(
+  value: unknown
+): AccumulationPeriod {
+  if (
+    value === "1w" ||
+    value === "mtd" ||
+    value === "1m" ||
+    value === "2m" ||
+    value === "3m"
+  ) {
+    return value;
+  }
+
+  return DEFAULT_ACCUMULATION_PERIOD;
+}
+
 /* =========================================================
    GET
 ========================================================= */
@@ -67,6 +102,11 @@ export async function GET(
         .doc(uid)
         .get();
 
+    /*
+     * Belum ada konfigurasi.
+     *
+     * Return default.
+     */
     if (!snapshot.exists) {
       return NextResponse.json({
         exists: false,
@@ -78,6 +118,8 @@ export async function GET(
           broker_name: "",
           destination_type: "telegram",
           destination_target: "",
+          accumulation_period:
+            DEFAULT_ACCUMULATION_PERIOD,
         },
       });
     }
@@ -110,17 +152,26 @@ export async function GET(
             ? data.broker_name
             : "",
 
-        destination_type:
-          data?.destination_type ===
-          "whatsapp"
-            ? "whatsapp"
-            : "telegram",
+        /*
+         * UI sekarang hanya Telegram.
+         */
+        destination_type: "telegram",
 
         destination_target:
           typeof data?.destination_target ===
           "string"
             ? data.destination_target
             : "",
+
+        /*
+         * Config lama yang belum punya
+         * accumulation_period otomatis
+         * dianggap MTD.
+         */
+        accumulation_period:
+          normalizeAccumulationPeriod(
+            data?.accumulation_period
+          ),
       },
     });
   } catch (error) {
@@ -190,11 +241,17 @@ export async function PUT(
     const enabled =
       body.enabled === true;
 
-    const destinationType: DestinationType =
-      body.destination_type ===
-      "whatsapp"
-        ? "whatsapp"
-        : "telegram";
+    /*
+     * Ambil accumulation_period.
+     *
+     * Kalau tidak dikirim:
+     * - untuk config lama tetap MTD
+     * - tidak membuat nilai invalid
+     */
+    const accumulationPeriod =
+      normalizeAccumulationPeriod(
+        body.accumulation_period
+      );
 
     /* =====================================================
        OFF
@@ -210,15 +267,27 @@ export async function PUT(
           .doc(uid)
           .get();
 
+      /*
+       * Belum ada dokumen sama sekali.
+       */
       if (!snapshot.exists) {
         const config: TradePlaneConfig = {
           enabled: false,
+
           broker_code: "",
+
           broker_id: null,
+
           broker_name: "",
+
           destination_type:
-            destinationType,
+            "telegram",
+
           destination_target: "",
+
+          accumulation_period:
+            accumulationPeriod,
+
           updatedAt: new Date(),
         };
 
@@ -232,12 +301,20 @@ export async function PUT(
 
           config: {
             enabled: false,
+
             broker_code: "",
+
             broker_id: null,
+
             broker_name: "",
+
             destination_type:
-              destinationType,
+              "telegram",
+
             destination_target: "",
+
+            accumulation_period:
+              accumulationPeriod,
           },
         });
       }
@@ -245,12 +322,30 @@ export async function PUT(
       const existing =
         snapshot.data();
 
+      /*
+       * OFF hanya mengubah enabled.
+       *
+       * Broker, destination, dan
+       * accumulation_period tetap.
+       *
+       * Kalau config lama belum punya
+       * accumulation_period, kita isi MTD.
+       */
+      const existingAccumulationPeriod =
+        normalizeAccumulationPeriod(
+          existing?.accumulation_period
+        );
+
       await db
         .collection("trade-plane")
         .doc(uid)
         .set(
           {
             enabled: false,
+
+            accumulation_period:
+              existingAccumulationPeriod,
+
             updatedAt:
               new Date(),
           },
@@ -284,16 +379,16 @@ export async function PUT(
               : "",
 
           destination_type:
-            existing?.destination_type ===
-            "whatsapp"
-              ? "whatsapp"
-              : "telegram",
+            "telegram",
 
           destination_target:
             typeof existing?.destination_target ===
             "string"
               ? existing.destination_target
               : "",
+
+          accumulation_period:
+            existingAccumulationPeriod,
         },
       });
     }
@@ -397,10 +492,13 @@ export async function PUT(
         brokerName,
 
       destination_type:
-        destinationType,
+        "telegram",
 
       destination_target:
         destinationTarget,
+
+      accumulation_period:
+        accumulationPeriod,
 
       updatedAt:
         new Date(),
@@ -421,16 +519,24 @@ export async function PUT(
 
       config: {
         enabled: true,
+
         broker_code:
           brokerCode,
+
         broker_id:
           brokerId,
+
         broker_name:
           brokerName,
+
         destination_type:
-          destinationType,
+          "telegram",
+
         destination_target:
           destinationTarget,
+
+        accumulation_period:
+          accumulationPeriod,
       },
     });
   } catch (error) {
