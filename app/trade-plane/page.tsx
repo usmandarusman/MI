@@ -445,7 +445,6 @@ export default function TradePlanePage() {
         <section
           id="signal"
           className="
-            min-h-screen
             scroll-mt-4
           "
         >
