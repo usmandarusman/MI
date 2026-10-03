@@ -169,7 +169,7 @@ type TradeSignalRow =
      * TIDAK disimpan ke Firestore.
      */
     tp: number | null;
-  };
+};
 
 /* =========================================================
    FIRESTORE SIGNAL DOCUMENT
@@ -1062,6 +1062,43 @@ function formatNumber(
 }
 
 /* =========================================================
+   PRICE FORMAT
+=========================================================
+
+   KHUSUS Entry Area dan TP.
+
+   Selalu dibulatkan KE BAWAH.
+   
+   Contoh:
+   100.5  -> 100
+   100.7  -> 100
+   100.99 -> 100
+   101    -> 101
+========================================================= */
+
+function formatPriceFloor(
+  value: number
+): string {
+  if (
+    !Number.isFinite(
+      value
+    )
+  ) {
+    return "-";
+  }
+
+  return new Intl.NumberFormat(
+    "id-ID",
+    {
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    }
+  ).format(
+    Math.floor(value)
+  );
+}
+
+/* =========================================================
    COMPACT NUMBER FORMAT
 ========================================================= */
 
@@ -1246,21 +1283,31 @@ function buildSignalBlock(
       row.symbol
     );
 
+  /*
+   * Entry Area:
+   * selalu bulat ke bawah,
+   * tanpa decimal.
+   */
   const entryArea =
     row.entryLow !==
       null &&
     row.entryHigh !==
       null
-      ? `${formatNumber(
+      ? `${formatPriceFloor(
           row.entryLow
-        )} — ${formatNumber(
+        )} — ${formatPriceFloor(
           row.entryHigh
         )}`
       : "-";
 
+  /*
+   * TP:
+   * selalu bulat ke bawah,
+   * tanpa decimal.
+   */
   const tp =
     row.tp !== null
-      ? formatNumber(
+      ? formatPriceFloor(
           row.tp
         )
       : "-";

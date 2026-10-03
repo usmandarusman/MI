@@ -510,7 +510,6 @@ export default function TradePlanePage() {
           id="auto-trade"
           className="
             mt-7
-            min-h-screen
             scroll-mt-4
           "
         >
