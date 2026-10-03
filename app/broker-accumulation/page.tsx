@@ -11,9 +11,21 @@ import {
 } from "react";
 
 import {
-  LucideEraser,
-  LucideX,
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  Check,
+  ChevronDown,
+  Database,
+  Eraser,
   Loader2,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  X,
 } from "lucide-react";
 
 import Input from "../components/fragments/ui/input";
@@ -876,7 +888,7 @@ export default function BrokerAccumulation() {
    */
 
   const handleChange = (
-    field: keyof typeof form,
+    field: keyof typeof initialForm,
     value: string
   ) => {
     setForm((prev) => ({
@@ -1219,23 +1231,66 @@ export default function BrokerAccumulation() {
     };
 
   return (
-    <div className="relative flex h-full w-full flex-col gap-4 overflow-x-auto px-4 py-4 dark:bg-zinc-950 md:mx-auto md:w-1/2">
+    <div className="relative min-h-full w-full overflow-x-hidden bg-[#f7f7f5] px-3 py-4 text-zinc-900 dark:bg-[#050505] dark:text-zinc-100 sm:px-5 sm:py-6">
+      {/* Ambient background */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute left-1/2 top-[-220px] h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-yellow-400/[0.035] blur-[140px] dark:bg-yellow-400/[0.05]" />
+        <div className="absolute -left-24 top-[35%] h-72 w-72 rounded-full bg-amber-300/[0.025] blur-[120px] dark:bg-yellow-500/[0.018]" />
+        <div className="absolute -right-24 bottom-[12%] h-80 w-80 rounded-full bg-yellow-400/[0.02] blur-[130px]" />
+        <div className="absolute inset-0 opacity-[0.018] dark:opacity-[0.028] [background-image:linear-gradient(rgba(100,100,100,0.45)_1px,transparent_1px),linear-gradient(90deg,rgba(100,100,100,0.45)_1px,transparent_1px)] [background-size:44px_44px]" />
+      </div>
+
+      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-5">
 
       {/* TITLE */}
 
-      <div>
-        <h1 className="text-center text-xl font-semibold text-zinc-900 dark:text-white">
-          Broker Accumulation
-        </h1>
-
-        <p className="mt-1 text-center text-xs text-zinc-500">
-          Masukkan data broker untuk melihat akumulasi
-        </p>
-      </div>
+      <header className="relative overflow-hidden rounded-[1.5rem] border border-zinc-200/80 bg-white/75 px-5 py-5 shadow-[0_20px_60px_rgba(0,0,0,0.045)] backdrop-blur-2xl dark:border-white/[0.065] dark:bg-white/[0.025] dark:shadow-[0_25px_80px_rgba(0,0,0,0.28)] sm:px-6 sm:py-6">
+        <div className="pointer-events-none absolute inset-x-[15%] top-0 h-px bg-gradient-to-r from-transparent via-yellow-400/60 to-transparent" />
+        <div className="relative flex items-center gap-3.5">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-yellow-500/15 bg-yellow-400/[0.07] text-yellow-600 shadow-[0_0_30px_rgba(234,179,8,0.07)] dark:text-yellow-400">
+            <BarChart3 size={21} strokeWidth={1.7} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-[-0.025em] text-zinc-950 dark:text-white sm:text-2xl">
+                Broker Accumulation
+              </h1>
+              <span className="rounded-full border border-yellow-500/15 bg-yellow-400/[0.06] px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.18em] text-yellow-600 dark:text-yellow-400">
+                Intelligence
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500 sm:text-xs">
+              Analisis akumulasi broker berdasarkan Net Buy, CSO, dan Free Float.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-gradient-to-r from-yellow-400/25 to-transparent" />
+          <Sparkles size={12} className="text-yellow-500/70" />
+          <div className="h-px flex-1 bg-gradient-to-l from-yellow-400/25 to-transparent" />
+        </div>
+      </header>
 
       {/* FORM INPUT */}
 
-      <div className="flex flex-col gap-2 rounded-xl border-2 border-zinc-200 p-2 dark:border-zinc-800">
+      <section className="relative overflow-visible rounded-[1.5rem] border border-zinc-200/80 bg-white/70 p-3 shadow-[0_20px_60px_rgba(0,0,0,0.04)] backdrop-blur-2xl dark:border-white/[0.065] dark:bg-[#0a0a0a]/80 dark:shadow-[0_25px_80px_rgba(0,0,0,0.3)] sm:p-4">
+        <div className="pointer-events-none absolute inset-x-[12%] top-0 h-px bg-gradient-to-r from-transparent via-yellow-400/45 to-transparent" />
+        <div className="mb-3 flex items-center justify-between gap-3 px-1 sm:px-2">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-white/[0.06] dark:bg-white/[0.025] dark:text-zinc-400">
+              <SlidersHorizontal size={14} strokeWidth={1.8} />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">Analysis Input</p>
+              <p className="mt-0.5 text-[9px] text-zinc-400 dark:text-zinc-600">Tentukan broker, emiten, dan Net Buy</p>
+            </div>
+          </div>
+          <div className="hidden items-center gap-1.5 text-[8px] uppercase tracking-[0.16em] text-zinc-400 sm:flex">
+            <ShieldCheck size={11} className="text-yellow-500" />
+            Local cache
+          </div>
+        </div>
+        <div className="grid gap-2.5 md:grid-cols-3">
 
         {/* EMITEN */}
 
@@ -1253,7 +1308,7 @@ export default function BrokerAccumulation() {
             value={form.emiten}
             maxLength={4}
             autoComplete="off"
-            className="min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            className="h-11 w-full rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 text-sm font-medium uppercase text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-yellow-500/50 focus:bg-white focus:ring-4 focus:ring-yellow-400/[0.06] dark:border-white/[0.07] dark:bg-white/[0.025] dark:text-white dark:placeholder:text-zinc-600 dark:focus:border-yellow-400/40 dark:focus:bg-white/[0.035]"
             onFocus={() =>
               setIsEmitenDropdownOpen(
                 true
@@ -1272,7 +1327,7 @@ export default function BrokerAccumulation() {
           />
 
           {isEmitenDropdownOpen && (
-            <div className="absolute left-0 top-full z-50 mt-1 max-h-64 w-64 max-w-[85vw] overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="absolute left-0 top-full z-50 mt-1 max-h-64 w-64 max-w-[85vw] overflow-y-auto rounded-2xl border border-zinc-200 bg-white/95 p-1.5 shadow-[0_25px_60px_rgba(0,0,0,0.14)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#0d0d0d]/98 dark:shadow-[0_25px_70px_rgba(0,0,0,0.55)]">
 
               {isSecuritiesLoading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-zinc-500">
@@ -1306,7 +1361,7 @@ export default function BrokerAccumulation() {
                           security
                         )
                       }
-                      className="flex w-full flex-col border-b border-zinc-100 px-3 py-2 text-left transition last:border-0 hover:bg-yellow-500/10 dark:border-zinc-800"
+                      className="flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition hover:bg-yellow-400/[0.07]"
                     >
                       <span className="text-sm font-semibold text-yellow-600 dark:text-yellow-400">
                         {
@@ -1348,7 +1403,7 @@ export default function BrokerAccumulation() {
             }
             value={form.broker}
             autoComplete="off"
-            className="min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm uppercase text-zinc-900 outline-none transition focus:border-yellow-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            className="h-11 w-full rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 text-sm font-medium uppercase text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-yellow-500/50 focus:bg-white focus:ring-4 focus:ring-yellow-400/[0.06] dark:border-white/[0.07] dark:bg-white/[0.025] dark:text-white dark:placeholder:text-zinc-600 dark:focus:border-yellow-400/40 dark:focus:bg-white/[0.035]"
             onFocus={() =>
               setIsBrokerDropdownOpen(
                 true
@@ -1367,7 +1422,7 @@ export default function BrokerAccumulation() {
           />
 
           {isBrokerDropdownOpen && (
-            <div className="absolute top-full z-50 mt-1 max-h-64 w-72 max-w-[85vw] overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="absolute top-full z-50 mt-1 max-h-64 w-72 max-w-[85vw] overflow-y-auto rounded-2xl border border-zinc-200 bg-white/95 p-1.5 shadow-[0_25px_60px_rgba(0,0,0,0.14)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#0d0d0d]/98 dark:shadow-[0_25px_70px_rgba(0,0,0,0.55)]">
 
               {isBrokersLoading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-zinc-500">
@@ -1401,7 +1456,7 @@ export default function BrokerAccumulation() {
                           broker
                         )
                       }
-                      className="flex w-full flex-col border-b border-zinc-100 px-3 py-2 text-left transition last:border-0 hover:bg-yellow-500/10 dark:border-zinc-800"
+                      className="flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition hover:bg-yellow-400/[0.07]"
                     >
                       <span
                         className={`text-sm font-semibold ${getBrokerColor(
@@ -1448,7 +1503,7 @@ export default function BrokerAccumulation() {
       {/* ERROR OWNERSHIP */}
 
       {ownershipError && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-center text-xs text-red-500">
+        <div className="flex items-start gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.05] px-3.5 py-2.5 text-xs text-red-500">
           {ownershipError}
         </div>
       )}
@@ -1459,7 +1514,7 @@ export default function BrokerAccumulation() {
         type="button"
         onClick={handleSubmit}
         disabled={isSubmitting}
-        className="flex h-11 items-center justify-center gap-2 rounded-xl border border-yellow-500/30 bg-yellow-500/10 text-sm font-medium text-yellow-600 transition-all duration-300 hover:border-yellow-500/60 hover:bg-yellow-500/15 hover:shadow-[0_0_25px_rgba(234,179,8,0.12)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:text-yellow-400"
+        className="group relative flex h-11 items-center justify-center w-full  gap-2 overflow-hidden rounded-xl border border-yellow-500/25 bg-yellow-400/[0.09] px-5 text-xs font-semibold text-yellow-700 transition-all duration-300 hover:border-yellow-400/50 hover:bg-yellow-400/[0.14] hover:shadow-[0_0_30px_rgba(234,179,8,0.1)] active:scale-[0.985] disabled:cursor-not-allowed disabled:opacity-50 dark:text-yellow-400"
       >
         {isSubmitting ? (
           <>
@@ -1474,12 +1529,13 @@ export default function BrokerAccumulation() {
           "Tampilkan"
         )}
       </button>
+      </section>
 
       {/* TABLE */}
 
       {data.length > 0 && (
         <>
-          <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-100 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 sm:px-4">
+          <div className="flex flex-col gap-3 border-b border-zinc-200/80 bg-transparent p-3 dark:border-white/[0.06] sm:flex-row sm:items-center sm:justify-between sm:px-4">
 
             <div className="flex min-w-0 items-center gap-2">
 
@@ -1542,20 +1598,20 @@ export default function BrokerAccumulation() {
               title="Hapus semua data"
               className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
             >
-              <LucideEraser
+              <Eraser
                 size={14}
               />
             </button>
           </div>
 
-          <div className="overflow-y-scroll rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <div className="overflow-hidden rounded-[1.25rem] border border-zinc-200/80 dark:border-white/[0.06]">
 
             <div className="overflow-x-auto">
 
               <table className="w-full min-w-[750px] text-sm">
 
                 <thead>
-                  <tr className="border-b border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800">
+                  <tr className="border-b border-zinc-200/80 bg-zinc-50/80 dark:border-white/[0.05] dark:bg-white/[0.018]">
 
                     {[
                       "Akumulasi",
@@ -1592,7 +1648,7 @@ export default function BrokerAccumulation() {
                         key={
                           item.id
                         }
-                        className="border-b border-zinc-100 transition-colors hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900/60"
+                        className="group border-b border-zinc-100/90 transition-colors hover:bg-yellow-400/[0.025] dark:border-white/[0.045] dark:hover:bg-yellow-400/[0.02]"
                       >
 
                         {/* AKUMULASI */}
@@ -1723,7 +1779,7 @@ export default function BrokerAccumulation() {
                             className="cursor-pointer px-3 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-500/10"
                             aria-label={`Hapus ${item.broker} - ${item.emiten}`}
                           >
-                            <LucideX
+                            <X
                               size={14}
                             />
                           </button>
@@ -1745,8 +1801,11 @@ export default function BrokerAccumulation() {
       {/* EMPTY */}
 
       {data.length === 0 && (
-        <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800">
-          <p className="text-sm text-zinc-400">
+        <div className="relative flex min-h-44 flex-col items-center justify-center overflow-hidden rounded-[1.5rem] border border-dashed border-zinc-200 bg-white/45 px-5 text-center backdrop-blur-xl dark:border-white/[0.07] dark:bg-white/[0.012]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-zinc-400 dark:border-white/[0.07] dark:bg-white/[0.025] dark:text-zinc-600">
+            <BarChart3 size={20} strokeWidth={1.5} />
+          </div>
+          <p className="mt-4 text-xs font-medium text-zinc-500 dark:text-zinc-400">
             Belum ada data broker
           </p>
         </div>
@@ -1756,7 +1815,7 @@ export default function BrokerAccumulation() {
 
       {showPopup && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4 backdrop-blur-md"
           onClick={() =>
             setShowPopup(false)
           }
@@ -1765,10 +1824,15 @@ export default function BrokerAccumulation() {
             onClick={(e) =>
               e.stopPropagation()
             }
-            className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+            className="relative w-full max-w-sm overflow-hidden rounded-[1.5rem] border border-zinc-200 bg-white p-5 shadow-[0_30px_100px_rgba(0,0,0,0.2)] dark:border-white/[0.08] dark:bg-[#0b0b0b] dark:shadow-[0_30px_100px_rgba(0,0,0,0.65)]"
           >
 
-            <div className="mb-4">
+            <div className="absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-yellow-400/60 to-transparent" />
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-yellow-500/15 bg-yellow-400/[0.06] text-yellow-600 dark:text-yellow-400">
+                <SlidersHorizontal size={16} />
+              </div>
+              <div>
 
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
                 Data belum lengkap
@@ -1778,6 +1842,7 @@ export default function BrokerAccumulation() {
                 Silakan isi bagian berikut:
               </p>
 
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1822,7 +1887,13 @@ export default function BrokerAccumulation() {
         />
       )}
 
+      <footer className="flex items-center justify-center gap-3 pb-2 pt-1">
+        <div className="h-px w-10 bg-gradient-to-r from-transparent to-zinc-300 dark:to-white/[0.08]" />
+        <span className="text-[8px] font-medium uppercase tracking-[0.3em] text-zinc-400/70 dark:text-zinc-600">MI • Broker Intelligence</span>
+        <div className="h-px w-10 bg-gradient-to-l from-transparent to-zinc-300 dark:to-white/[0.08]" />
+      </footer>
     </div>
+  </div>
   );
 }
 
