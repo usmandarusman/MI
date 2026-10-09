@@ -44,18 +44,11 @@ type OwnershipPeriod = {
 };
 
 function isNumber(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value)
-  );
+  return typeof value === "number" && Number.isFinite(value);
 }
 
-function isValidInvestor(
-  value: unknown
-): value is Investor {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+function isValidInvestor(value: unknown): value is Investor {
+  if (!value || typeof value !== "object") return false;
 
   const investor = value as Record<string, unknown>;
 
@@ -65,29 +58,18 @@ function isValidInvestor(
   );
 }
 
-function validateStock(
-  value: unknown
-): value is OwnershipStock {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+function validateStock(value: unknown): value is OwnershipStock {
+  if (!value || typeof value !== "object") return false;
 
   const stock = value as Record<string, unknown>;
 
-  if (typeof stock.ticker !== "string") {
-    return false;
-  }
+  if (typeof stock.ticker !== "string") return false;
 
   const ticker = stock.ticker.trim().toUpperCase();
 
-  if (!/^[A-Z0-9]{1,10}$/.test(ticker)) {
-    return false;
-  }
+  if (!/^[A-Z0-9]{1,10}$/.test(ticker)) return false;
 
-  if (
-    typeof stock.name !== "string" ||
-    !stock.name.trim()
-  ) {
+  if (typeof stock.name !== "string" || !stock.name.trim()) {
     return false;
   }
 
@@ -102,9 +84,7 @@ function validateStock(
     return false;
   }
 
-  if (
-    Math.abs(stock.float + stock.freeFloat - 100) > 1
-  ) {
+  if (Math.abs(stock.float + stock.freeFloat - 100) > 1) {
     return false;
   }
 
@@ -114,9 +94,7 @@ function validateStock(
   );
 }
 
-function normalizeStock(
-  stock: OwnershipStock
-): OwnershipStock {
+function normalizeStock(stock: OwnershipStock): OwnershipStock {
   return {
     ...stock,
     ticker: stock.ticker.trim().toUpperCase(),
@@ -130,18 +108,11 @@ function getCurrentJakartaYearMonth() {
     month: "2-digit",
   }).formatToParts(new Date());
 
-  const year = parts.find(
-    (part) => part.type === "year"
-  )?.value;
-
-  const month = parts.find(
-    (part) => part.type === "month"
-  )?.value;
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
 
   if (!year || !month) {
-    throw new Error(
-      "Gagal menentukan periode waktu Jakarta"
-    );
+    throw new Error("Gagal menentukan periode waktu Jakarta");
   }
 
   return {
@@ -155,15 +126,10 @@ function getPreviousPeriod(
   month: number,
   offset: number
 ): OwnershipPeriod {
-  const date = new Date(
-    Date.UTC(year, month - 1 - offset, 1)
-  );
+  const date = new Date(Date.UTC(year, month - 1 - offset, 1));
 
   const targetYear = String(date.getUTCFullYear());
-
-  const targetMonth = String(
-    date.getUTCMonth() + 1
-  ).padStart(2, "0");
+  const targetMonth = String(date.getUTCMonth() + 1).padStart(2, "0");
 
   return {
     year: targetYear,
@@ -173,10 +139,8 @@ function getPreviousPeriod(
 }
 
 /**
- * Mengambil token terbaru dari endpoint token.
- *
- * Token tidak lagi dibaca dari IDX_OWNERSHIP_TOKEN.
- * Token hanya digunakan dalam memori selama eksekusi ini.
+ * Ambil token terbaru setiap kali sync dijalankan.
+ * Token tidak disimpan ke Firestore dan tidak dicetak ke log.
  */
 async function fetchOwnershipToken(): Promise<string> {
   const response = await fetch(TOKEN_API_URL, {
@@ -190,11 +154,19 @@ async function fetchOwnershipToken(): Promise<string> {
 
   if (!response.ok) {
     throw new Error(
-      `IDX Ownership token API error: ${response.status}`
+      `IDX Ownership token API error: HTTP ${response.status}`
     );
   }
 
-  const json: unknown = await response.json();
+  const responseText = await response.text();
+
+  let json: unknown;
+
+  try {
+    json = JSON.parse(responseText);
+  } catch {
+    throw new Error("Respons token API bukan JSON yang valid");
+  }
 
   if (
     !json ||
@@ -203,33 +175,98 @@ async function fetchOwnershipToken(): Promise<string> {
     typeof json.token !== "string" ||
     !json.token.trim()
   ) {
+    const keys =
+      json && typeof json === "object"
+        ? Object.keys(json).join(", ")
+        : typeof json;
+
     throw new Error(
-      "Response IDX Ownership tidak berisi token yang valid"
+      `Respons token API tidak memiliki token yang valid. Struktur: ${keys}`
     );
   }
 
   return json.token.trim();
 }
 
+/**
+ * Membaca array saham dari beberapa bentuk respons API.
+ */
 function extractArray(
-  json: unknown
+  json: unknown,
+  depth = 0
 ): unknown[] | null {
   if (Array.isArray(json)) {
     return json;
   }
 
   if (
-    json &&
-    typeof json === "object" &&
-    "data" in json &&
-    Array.isArray(
-      (json as { data: unknown }).data
-    )
+    !json ||
+    typeof json !== "object" ||
+    depth >= 5
   ) {
-    return (json as { data: unknown[] }).data;
+    return null;
+  }
+
+  const object = json as Record<string, unknown>;
+
+  const possibleKeys = [
+    "data",
+    "stocks",
+    "results",
+    "items",
+    "result",
+    "rows",
+    "records",
+  ];
+
+  for (const key of possibleKeys) {
+    if (!(key in object)) continue;
+
+    const result = extractArray(object[key], depth + 1);
+
+    if (result !== null) {
+      return result;
+    }
   }
 
   return null;
+}
+
+/**
+ * Diagnostik respons yang aman untuk log.
+ */
+function describeResponse(json: unknown): string {
+  if (Array.isArray(json)) {
+    return `array dengan ${json.length} item`;
+  }
+
+  if (!json || typeof json !== "object") {
+    return `tipe respons ${typeof json}`;
+  }
+
+  const object = json as Record<string, unknown>;
+  const keys = Object.keys(object).slice(0, 15);
+
+  const message =
+    typeof object.message === "string"
+      ? object.message
+      : typeof object.error === "string"
+        ? object.error
+        : typeof object.detail === "string"
+          ? object.detail
+          : "";
+
+  const safeMessage = message
+    .replace(/https?:\/\/\S+/gi, "[URL]")
+    .replace(/token\s*[:=]\s*\S+/gi, "token=[REDACTED]")
+    .slice(0, 180);
+
+  return [
+    `keys: ${keys.join(", ") || "(tidak ada)"}`,
+    safeMessage ? `message: ${safeMessage}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
 }
 
 async function fetchOwnershipData(): Promise<{
@@ -245,12 +282,11 @@ async function fetchOwnershipData(): Promise<{
     );
   }
 
-  // Ambil token otomatis setiap eksekusi cron.
+  // Token diperbarui otomatis setiap eksekusi sync.
   const token = await fetchOwnershipToken();
 
   const current = getCurrentJakartaYearMonth();
 
-  // Periksa bulan terbaru dahulu, lalu mundur.
   for (
     let offset = 0;
     offset < MAX_MONTHS_TO_CHECK;
@@ -265,10 +301,7 @@ async function fetchOwnershipData(): Promise<{
     const url = new URL(apiUrl);
 
     url.searchParams.set("token", token);
-    url.searchParams.set(
-      "year",
-      selectedPeriod.year
-    );
+    url.searchParams.set("year", selectedPeriod.year);
     url.searchParams.set(
       "month",
       String(Number(selectedPeriod.month))
@@ -292,18 +325,19 @@ async function fetchOwnershipData(): Promise<{
       response.status === 403
     ) {
       throw new Error(
-        `IDX Ownership API authentication failed: ${response.status}. Token otomatis ditolak oleh API.`
+        `IDX Ownership API authentication failed: HTTP ${response.status}. Token otomatis ditolak oleh API.`
       );
     }
 
-    // Periode mungkin belum tersedia.
+    // Beberapa endpoint menggunakan status HTTP ini
+    // ketika periode yang diminta tidak tersedia.
     if (
       response.status === 400 ||
       response.status === 404 ||
       response.status === 422
     ) {
       console.log(
-        `IDX ownership period ${selectedPeriod.period} unavailable: ${response.status}`
+        `Ownership ${selectedPeriod.period} tidak tersedia: HTTP ${response.status}. Mencoba periode sebelumnya.`
       );
 
       continue;
@@ -311,17 +345,51 @@ async function fetchOwnershipData(): Promise<{
 
     if (!response.ok) {
       throw new Error(
-        `IDX Ownership API error: ${response.status} for ${selectedPeriod.period}`
+        `IDX Ownership API error: HTTP ${response.status} for ${selectedPeriod.period}`
       );
     }
 
-    const json: unknown = await response.json();
+    const responseText = await response.text();
+
+    let json: unknown;
+
+    try {
+      json = JSON.parse(responseText);
+    } catch {
+      throw new Error(
+        `Respons API bukan JSON valid untuk periode ${selectedPeriod.period}.`
+      );
+    }
 
     const rawData = extractArray(json);
 
-    if (!rawData) {
+    // PERBAIKAN UTAMA:
+    // Pesan "Data tidak tersedia" berarti coba bulan sebelumnya.
+    if (rawData === null) {
+      const object =
+        json && typeof json === "object"
+          ? (json as Record<string, unknown>)
+          : null;
+
+      const message =
+        typeof object?.message === "string"
+          ? object.message.trim()
+          : "";
+
+      if (/data tidak tersedia/i.test(message)) {
+        console.log(
+          `Ownership ${selectedPeriod.period} belum tersedia; mencoba periode sebelumnya.`
+        );
+
+        continue;
+      }
+
+      // Jangan anggap semua error API sebagai data kosong.
+      // Respons yang tidak dikenal tetap dilaporkan.
+      const detail = describeResponse(json);
+
       throw new Error(
-        `Format response API tidak valid untuk periode ${selectedPeriod.period}`
+        `Format response API tidak dikenali untuk periode ${selectedPeriod.period}. ${detail}`
       );
     }
 
@@ -331,7 +399,7 @@ async function fetchOwnershipData(): Promise<{
 
     if (stocks.length === 0) {
       console.log(
-        `No valid ownership data for ${selectedPeriod.period}; checking previous month`
+        `Tidak ada data ownership valid untuk ${selectedPeriod.period}. Total baris: ${rawData.length}. Mencoba periode sebelumnya.`
       );
 
       continue;
@@ -357,10 +425,7 @@ async function syncOwnership() {
   } = await fetchOwnershipData();
 
   // Hilangkan ticker duplikat.
-  const uniqueStocks = new Map<
-    string,
-    OwnershipStock
-  >();
+  const uniqueStocks = new Map<string, OwnershipStock>();
 
   for (const stock of stocks) {
     uniqueStocks.set(stock.ticker, stock);
@@ -376,10 +441,7 @@ async function syncOwnership() {
     i < uniqueList.length;
     i += BATCH_SIZE
   ) {
-    const chunk = uniqueList.slice(
-      i,
-      i + BATCH_SIZE
-    );
+    const chunk = uniqueList.slice(i, i + BATCH_SIZE);
 
     const refs = chunk.map((stock) =>
       db.collection(COLLECTION).doc(stock.ticker)
@@ -398,7 +460,7 @@ async function syncOwnership() {
       const stock = chunk[index];
       const snapshot = snapshots[index];
 
-      // Hanya update dokumen yang sudah ada.
+      // Tidak membuat dokumen securities baru.
       if (!snapshot.exists) {
         skippedMissingDocs++;
         continue;
@@ -416,11 +478,9 @@ async function syncOwnership() {
             investors: stock.investors,
             source: "idx-stocks-ownership",
             period: selectedPeriod.period,
-            updatedAt:
-              FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           },
-          ownershipUpdatedAt:
-            FieldValue.serverTimestamp(),
+          ownershipUpdatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
@@ -457,12 +517,11 @@ function isAuthorized(req: NextRequest) {
     (!!process.env.CRON_SECRET &&
       auth === `Bearer ${process.env.CRON_SECRET}`) ||
     (!!process.env.STOCK_SYNC_SECRET &&
-      manualSecret ===
-        process.env.STOCK_SYNC_SECRET)
+      manualSecret === process.env.STOCK_SYNC_SECRET)
   );
 }
 
-export async function GET(req: NextRequest) {
+async function handleSync(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json(
       {
@@ -478,54 +537,28 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error(
-      "Ownership cron sync failed:",
-      error
-    );
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Sync gagal";
+
+    // Hindari mencetak URL request yang berisi token.
+    console.error("Ownership sync failed:", message);
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Sync gagal",
+        message,
       },
       { status: 500 }
     );
   }
 }
 
+export async function GET(req: NextRequest) {
+  return handleSync(req);
+}
+
 export async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Unauthorized",
-      },
-      { status: 401 }
-    );
-  }
-
-  try {
-    const result = await syncOwnership();
-
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error(
-      "Ownership manual sync failed:",
-      error
-    );
-
-    return NextResponse.json(
-      {
-        success: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Sync gagal",
-      },
-      { status: 500 }
-    );
-  }
+  return handleSync(req);
 }
