@@ -1,30 +1,43 @@
+
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
+
 import {
   Activity,
   ArrowUpRight,
   BarChart3,
+  ChevronRight,
   Crosshair,
   Radio,
   ScanLine,
+  ShieldCheck,
 } from "lucide-react";
 
 import { InfiniteMarqueeSlider } from "./components/fungsi/infiniteSlider";
+
+// Email Google yang diizinkan melihat Admin Console.
+// Bisa dioverride melalui NEXT_PUBLIC_ADMIN_EMAIL.
+const ADMIN_EMAIL = (
+  process.env.NEXT_PUBLIC_ADMIN_EMAIL || "admin"
+)
+  .trim()
+  .toLowerCase();
 
 const links = [
   {
     id: 1,
     title: "Broker Accumulation",
-    description:
-      "Monitor aktivitas transaksi broker secara terstruktur.",
+    description: "Monitor aktivitas transaksi broker secara terstruktur.",
     url: "/broker-accumulation",
   },
   {
     id: 2,
     title: "Broker Movement",
-    description:
-      "Monitor pergerakan broker secara terstruktur.",
+    description: "Monitor pergerakan broker secara terstruktur.",
     url: "https://axentraz.id/broker-activity",
   },
   {
@@ -37,154 +50,121 @@ const links = [
 ];
 
 export default function Home() {
+  const [isOnline, setIsOnline] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (user) => {
+        const userEmail = user?.email?.trim().toLowerCase() ?? "";
+
+        setIsOnline(Boolean(user));
+        setIsAdmin(
+          Boolean(userEmail && ADMIN_EMAIL && userEmail === ADMIN_EMAIL)
+        );
+        setAuthChecked(true);
+
+        if (process.env.NODE_ENV === "development") {
+          console.info("[Home Auth]", {
+            signedIn: Boolean(user),
+            email: userEmail || "(email tidak tersedia)",
+            adminEmailConfigured: Boolean(ADMIN_EMAIL),
+            isAdmin: Boolean(
+              userEmail && ADMIN_EMAIL && userEmail === ADMIN_EMAIL
+            ),
+          });
+        }
+      },
+      (error) => {
+        console.error("[Home Auth] Gagal memeriksa sesi Firebase:", error);
+        setIsOnline(false);
+        setIsAdmin(false);
+        setAuthChecked(true);
+      }
+    );
+
+    return unsubscribe;
+  }, []);
+
   return (
     <div
       className="
-        relative
-        min-h-full
-        w-full
-        overflow-hidden
-        bg-[#fafafa]
-        px-4
-        py-7
-        dark:bg-[#050505]
-        sm:px-6
-        sm:py-10
+        relative min-h-full w-full overflow-hidden
+        bg-[#fafafa] px-4 py-7 dark:bg-[#050505]
+        sm:px-6 sm:py-10
       "
     >
-      {/* =====================================================
-          BACKGROUND ATMOSPHERE
-      ===================================================== */}
-
+      {/* BACKGROUND ATMOSPHERE */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div
           className="
-            absolute
-            left-1/2
-            top-[-180px]
-            h-[520px]
-            w-[520px]
-            -translate-x-1/2
-            rounded-full
-            bg-yellow-400/[0.045]
-            blur-[130px]
-            dark:bg-yellow-400/[0.055]
+            absolute left-1/2 top-[-180px] h-[520px] w-[520px]
+            -translate-x-1/2 rounded-full bg-yellow-400/[0.045]
+            blur-[130px] dark:bg-yellow-400/[0.055]
           "
         />
 
         <div
           className="
-            absolute
-            left-[8%]
-            top-[40%]
-            h-40
-            w-40
-            rounded-full
-            bg-yellow-300/[0.025]
-            blur-[100px]
+            absolute left-[8%] top-[40%] h-40 w-40
+            rounded-full bg-yellow-300/[0.025] blur-[100px]
             dark:bg-yellow-400/[0.02]
           "
         />
 
         <div
           className="
-            absolute
-            right-[5%]
-            bottom-[15%]
-            h-44
-            w-44
-            rounded-full
-            bg-yellow-500/[0.02]
-            blur-[100px]
+            absolute bottom-[15%] right-[5%] h-44 w-44
+            rounded-full bg-yellow-500/[0.02] blur-[100px]
           "
         />
 
-        {/* subtle grid */}
-
         <div
           className="
-            absolute
-            inset-0
-            opacity-[0.018]
-            dark:opacity-[0.025]
+            absolute inset-0 opacity-[0.018] dark:opacity-[0.025]
             [background-image:linear-gradient(rgba(120,120,120,0.4)_1px,transparent_1px),linear-gradient(90deg,rgba(120,120,120,0.4)_1px,transparent_1px)]
             [background-size:48px_48px]
           "
         />
       </div>
 
-      {/* =====================================================
-          HEADER
-      ===================================================== */}
-
+      {/* HEADER */}
       <header
         className="
-          relative
-          z-10
-          mx-auto
-          flex
-          w-full
-          max-w-2xl
-          flex-col
-          items-center
-          text-center
+          relative z-10 mx-auto flex w-full max-w-2xl
+          flex-col items-center text-center
         "
       >
         {/* SYSTEM STATUS */}
-
         <div
           className="
-            mb-5
-            flex
-            items-center
-            gap-2
-            rounded-full
-            border
-            border-zinc-200
-            bg-white/70
-            px-3
-            py-1.5
-            shadow-sm
-            backdrop-blur-xl
-            dark:border-white/[0.07]
-            dark:bg-white/[0.025]
+            mb-5 flex items-center gap-2 rounded-full border
+            border-zinc-200 bg-white/70 px-3 py-1.5
+            shadow-sm backdrop-blur-xl
+            dark:border-white/[0.07] dark:bg-white/[0.025]
           "
         >
           <span className="relative flex h-2 w-2">
             <span
               className="
-                absolute
-                inline-flex
-                h-full
-                w-full
-                animate-ping
-                rounded-full
-                bg-yellow-400
-                opacity-50
+                absolute inline-flex h-full w-full animate-ping
+                rounded-full bg-yellow-400 opacity-50
               "
             />
-
             <span
               className="
-                relative
-                inline-flex
-                h-2
-                w-2
-                rounded-full
-                bg-yellow-400
-                shadow-[0_0_8px_rgba(250,204,21,0.8)]
+                relative inline-flex h-2 w-2 rounded-full
+                bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.8)]
               "
             />
           </span>
 
           <span
             className="
-              text-[9px]
-              font-medium
-              uppercase
-              tracking-[0.22em]
+              text-[9px] font-medium uppercase tracking-[0.22em]
               text-zinc-500
-              dark:text-zinc-500
             "
           >
             Intelligence System
@@ -192,22 +172,12 @@ export default function Home() {
         </div>
 
         {/* TITLE */}
-
         <h1
           className="
-            bg-gradient-to-b
-            from-zinc-950
-            via-zinc-800
-            to-zinc-500
-            bg-clip-text
-            text-[2rem]
-            font-semibold
-            tracking-[-0.04em]
-            text-transparent
-            dark:from-white
-            dark:via-zinc-100
-            dark:to-zinc-500
-            sm:text-[2.5rem]
+            bg-gradient-to-b from-zinc-950 via-zinc-800 to-zinc-500
+            bg-clip-text text-[2rem] font-semibold tracking-[-0.04em]
+            text-transparent dark:from-white dark:via-zinc-100
+            dark:to-zinc-500 sm:text-[2.5rem]
           "
         >
           Mann&apos;s Intelligence
@@ -215,13 +185,8 @@ export default function Home() {
 
         <p
           className="
-            mt-2.5
-            max-w-md
-            text-[11px]
-            leading-relaxed
-            text-zinc-500
-            dark:text-zinc-500
-            sm:text-xs
+            mt-2.5 max-w-md text-[11px] leading-relaxed
+            text-zinc-500 sm:text-xs
           "
         >
           Market intelligence tools designed to help you
@@ -229,140 +194,179 @@ export default function Home() {
         </p>
 
         {/* DECORATIVE LINE */}
-
-        <div
-          className="
-            mt-6
-            flex
-            items-center
-            gap-2
-          "
-        >
+        <div className="mt-6 flex items-center gap-2">
           <div
             className="
-              h-px
-              w-8
-              bg-gradient-to-r
-              from-transparent
-              to-yellow-400/40
+              h-px w-8 bg-gradient-to-r
+              from-transparent to-yellow-400/40
             "
           />
-
           <div
             className="
-              h-1
-              w-1
-              rounded-full
-              bg-yellow-400
+              h-1 w-1 rounded-full bg-yellow-400
               shadow-[0_0_7px_rgba(250,204,21,0.8)]
             "
           />
-
           <div
             className="
-              h-px
-              w-8
-              bg-gradient-to-l
-              from-transparent
-              to-yellow-400/40
+              h-px w-8 bg-gradient-to-l
+              from-transparent to-yellow-400/40
             "
           />
         </div>
+
+        {/* ADMIN CONSOLE */}
+        {authChecked && isAdmin && (
+          <Link
+            href="/admin/axentraz"
+            aria-label="Buka Admin Console"
+            className="
+              group relative mt-5 inline-flex max-w-full
+              items-center gap-3 overflow-hidden rounded-2xl
+              border border-yellow-500/25 bg-white/80 px-4 py-3
+              text-left shadow-[0_8px_30px_rgba(234,179,8,0.06)]
+              backdrop-blur-xl transition-all duration-300
+              hover:-translate-y-0.5 hover:border-yellow-400/50
+              hover:shadow-[0_10px_35px_rgba(234,179,8,0.14)]
+              active:translate-y-0
+              dark:border-yellow-400/15 dark:bg-white/[0.025]
+              dark:hover:bg-yellow-400/[0.045]
+              dark:hover:shadow-[0_0_35px_rgba(234,179,8,0.08)]
+            "
+          >
+            {/* AMBIENT GLOW */}
+            <span
+              className="
+                pointer-events-none absolute -right-8 -top-10
+                h-24 w-24 rounded-full bg-yellow-400/10
+                blur-2xl transition-opacity duration-300
+                group-hover:opacity-100
+              "
+            />
+
+            {/* ADMIN ICON */}
+            <span
+              className="
+                relative flex h-10 w-10 shrink-0 items-center
+                justify-center rounded-xl border border-yellow-500/20
+                bg-yellow-400/[0.09] text-yellow-600
+                dark:text-yellow-400
+              "
+            >
+              <ShieldCheck size={19} strokeWidth={1.7} />
+            </span>
+
+            {/* ADMIN TEXT */}
+            <span className="relative min-w-0">
+              <span
+                className="
+                  flex flex-wrap items-center gap-2 text-[10px]
+                  font-semibold uppercase tracking-[0.15em]
+                  text-zinc-900 dark:text-zinc-100
+                "
+              >
+                Admin Console
+
+                <span
+                  className="
+                    rounded-full border border-yellow-500/20
+                    bg-yellow-400/[0.08] px-1.5 py-0.5
+                    text-[7px] font-medium tracking-wider
+                    text-yellow-700 dark:text-yellow-400
+                  "
+                >
+                  ADMIN
+                </span>
+              </span>
+
+              <span
+                className="
+                  mt-1 block text-[10px] leading-relaxed
+                  text-zinc-500
+                "
+              >
+                Manage system configuration
+              </span>
+            </span>
+
+            {/* ARROW */}
+            <span
+              className="
+                relative ml-1 flex h-8 w-8 shrink-0
+                items-center justify-center rounded-full border
+                border-zinc-200/80 text-zinc-400
+                transition-all duration-300
+                group-hover:border-yellow-400/30
+                group-hover:bg-yellow-400/[0.08]
+                group-hover:text-yellow-600
+                dark:border-white/[0.07]
+                dark:group-hover:text-yellow-400
+              "
+            >
+              <ChevronRight
+                size={16}
+                className="
+                  transition-transform duration-300
+                  group-hover:translate-x-0.5
+                "
+              />
+            </span>
+          </Link>
+        )}
+
+        {/* AUTH DEBUG: hanya muncul di development */}
+        {process.env.NODE_ENV === "development" && authChecked && (
+          <p className="mt-3 text-[10px] text-zinc-400">
+            Admin check: {isAdmin ? "MATCH" : "NO MATCH"}
+          </p>
+        )}
       </header>
 
-      {/* =====================================================
-          MAIN
-      ===================================================== */}
-
-      <div
-        className="
-          relative
-          mx-auto
-          mt-8
-          w-full
-          max-w-2xl
-        "
-      >
-        {/* outer glow */}
-
+      {/* MAIN */}
+      <div className="relative mx-auto mt-8 w-full max-w-2xl">
+        {/* OUTER GLOW */}
         <div
           className="
-            pointer-events-none
-            absolute
-            -inset-6
-            rounded-[2rem]
-            bg-yellow-400/[0.025]
-            blur-3xl
+            pointer-events-none absolute -inset-6 rounded-[2rem]
+            bg-yellow-400/[0.025] blur-3xl
             dark:bg-yellow-400/[0.045]
           "
         />
 
-        {/* ===================================================
-            APPLICATION PANEL
-        =================================================== */}
-
+        {/* APPLICATION PANEL */}
         <main
           className="
-            relative
-            z-10
-            overflow-hidden
-            rounded-[1.5rem]
-            border
-            border-zinc-200/80
-            bg-white/75
-            p-2
+            relative z-10 overflow-hidden rounded-[1.5rem]
+            border border-zinc-200/80 bg-white/75 p-2
             shadow-[0_25px_80px_rgba(0,0,0,0.06)]
-            backdrop-blur-2xl
-            dark:border-white/[0.07]
+            backdrop-blur-2xl dark:border-white/[0.07]
             dark:bg-[#0b0b0b]/80
             dark:shadow-[0_25px_90px_rgba(0,0,0,0.45)]
             sm:p-2.5
           "
         >
-          {/* top edge */}
-
+          {/* TOP EDGE */}
           <div
             className="
-              pointer-events-none
-              absolute
-              left-[15%]
-              right-[15%]
-              top-0
-              h-px
-              bg-gradient-to-r
-              from-transparent
-              via-yellow-400/50
-              to-transparent
+              pointer-events-none absolute left-[15%] right-[15%]
+              top-0 h-px bg-gradient-to-r from-transparent
+              via-yellow-400/50 to-transparent
             "
           />
 
           {/* PANEL HEADER */}
-
           <div
             className="
-              flex
-              items-center
-              justify-between
-              px-3
-              pb-3
-              pt-2
+              flex items-center justify-between px-3 pb-3 pt-2
               sm:px-4
             "
           >
             <div className="flex items-center gap-2.5">
               <div
                 className="
-                  flex
-                  h-7
-                  w-7
-                  items-center
-                  justify-center
-                  rounded-lg
-                  border
-                  border-yellow-500/15
-                  bg-yellow-400/[0.06]
-                  text-yellow-500
-                  dark:text-yellow-400
+                  flex h-7 w-7 items-center justify-center rounded-lg
+                  border border-yellow-500/15 bg-yellow-400/[0.06]
+                  text-yellow-500 dark:text-yellow-400
                 "
               >
                 <ScanLine size={14} strokeWidth={1.8} />
@@ -371,69 +375,71 @@ export default function Home() {
               <div>
                 <p
                   className="
-                    text-[10px]
-                    font-semibold
-                    uppercase
-                    tracking-[0.16em]
-                    text-zinc-700
+                    text-[10px] font-semibold uppercase
+                    tracking-[0.16em] text-zinc-700
                     dark:text-zinc-300
                   "
                 >
                   Intelligence Hub
                 </p>
 
-                <p
-                  className="
-                    mt-0.5
-                    text-[9px]
-                    text-zinc-400
-                    dark:text-zinc-600
-                  "
-                >
+                <p className="mt-0.5 text-[9px] text-zinc-400 dark:text-zinc-600">
                   Select a module to continue
                 </p>
               </div>
             </div>
 
+            {/* ONLINE STATUS */}
             <div
               className="
-                flex
-                items-center
-                gap-1.5
-                rounded-full
-                border
-                border-zinc-200
-                px-2.5
-                py-1
+                flex items-center gap-1.5 rounded-full border
+                border-zinc-200 px-2.5 py-1
                 dark:border-white/[0.06]
               "
             >
               <Radio
                 size={10}
-                className="text-yellow-500"
+                className={
+                  isOnline
+                    ? "text-green-400 drop-shadow-[0_0_5px_rgba(74,222,128,0.55)]"
+                    : "text-zinc-400/60 dark:text-zinc-600/70"
+                }
               />
 
               <span
-                className="
-                  text-[8px]
-                  font-medium
-                  uppercase
-                  tracking-wider
-                  text-zinc-400
-                "
+                className={`text-[8px] font-medium uppercase tracking-wider transition-colors duration-300 ${
+                  isOnline
+                    ? "text-green-400"
+                    : "text-zinc-400/70 dark:text-zinc-600/70"
+                }`}
               >
-                Online
+                {isOnline ? "Online" : "Offline"}
+              </span>
+
+              <span className="relative flex h-1.5 w-1.5">
+                {isOnline && (
+                  <span
+                    className="
+                      absolute inline-flex h-full w-full
+                      animate-ping rounded-full bg-green-400/70
+                    "
+                  />
+                )}
+
+                <span
+                  className={`relative inline-flex h-1.5 w-1.5 rounded-full transition-all duration-300 ${
+                    isOnline
+                      ? "bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.9)]"
+                      : "bg-zinc-400/50 dark:bg-zinc-600/50"
+                  }`}
+                />
               </span>
             </div>
           </div>
 
-          {/* =================================================
-              MODULES
-          ================================================= */}
-
+          {/* MODULES */}
           <div className="flex flex-col gap-2.5">
             {links.map((item) => {
-
               const Icon =
                 item.id === 1
                   ? BarChart3
@@ -446,104 +452,56 @@ export default function Home() {
                   key={item.id}
                   href={item.url}
                   className="
-                    group
-                    relative
-                    overflow-hidden
-                    rounded-[1.15rem]
-                    border
-                    border-zinc-200/80
-                    bg-zinc-50/70
-                    px-4
-                    py-4
-                    transition-all
-                    duration-300
-                    hover:-translate-y-[2px]
-                    hover:border-yellow-500/25
-                    hover:bg-white
+                    group relative overflow-hidden rounded-[1.15rem]
+                    border border-zinc-200/80 bg-zinc-50/70 px-4 py-4
+                    transition-all duration-300 hover:-translate-y-[2px]
+                    hover:border-yellow-500/25 hover:bg-white
                     hover:shadow-[0_18px_45px_rgba(0,0,0,0.06)]
-                    active:translate-y-0
-                    dark:border-white/[0.06]
+                    active:translate-y-0 dark:border-white/[0.06]
                     dark:bg-white/[0.018]
                     dark:hover:border-yellow-400/25
                     dark:hover:bg-white/[0.035]
                     dark:hover:shadow-[0_18px_50px_rgba(0,0,0,0.35)]
-                    sm:px-5
-                    sm:py-[1.15rem]
+                    sm:px-5 sm:py-[1.15rem]
                   "
                 >
                   {/* CARD GLOW */}
-
                   <div
                     className="
-                      pointer-events-none
-                      absolute
-                      -right-20
-                      -top-20
-                      h-40
-                      w-40
-                      rounded-full
-                      bg-yellow-400/[0.06]
-                      opacity-0
-                      blur-3xl
-                      transition-opacity
-                      duration-500
-                      group-hover:opacity-100
+                      pointer-events-none absolute -right-20 -top-20
+                      h-40 w-40 rounded-full bg-yellow-400/[0.06]
+                      opacity-0 blur-3xl transition-opacity
+                      duration-500 group-hover:opacity-100
                     "
                   />
 
                   {/* CARD CONTENT */}
-
                   <div
                     className="
-                      relative
-                      flex
-                      items-center
-                      justify-between
-                      gap-4
+                      relative flex items-center justify-between gap-4
                     "
                   >
                     <div className="flex min-w-0 items-center gap-3.5">
                       {/* MODULE ICON */}
-
                       <div
                         className="
-                          relative
-                          flex
-                          h-11
-                          w-11
-                          shrink-0
-                          items-center
-                          justify-center
-                          overflow-hidden
-                          rounded-xl
-                          border
-                          border-zinc-200
-                          bg-white
-                          text-zinc-400
-                          shadow-sm
-                          transition-all
-                          duration-300
+                          relative flex h-11 w-11 shrink-0
+                          items-center justify-center overflow-hidden
+                          rounded-xl border border-zinc-200 bg-white
+                          text-zinc-400 shadow-sm transition-all duration-300
                           group-hover:border-yellow-400/25
                           group-hover:text-yellow-500
                           group-hover:shadow-[0_0_25px_rgba(234,179,8,0.1)]
-                          dark:border-white/[0.07]
-                          dark:bg-white/[0.025]
-                          dark:text-zinc-600
-                          dark:group-hover:text-yellow-400
+                          dark:border-white/[0.07] dark:bg-white/[0.025]
+                          dark:text-zinc-600 dark:group-hover:text-yellow-400
                         "
                       >
                         <div
                           className="
-                            absolute
-                            inset-0
-                            bg-gradient-to-br
-                            from-yellow-400/[0.08]
-                            via-transparent
-                            to-transparent
-                            opacity-0
-                            transition-opacity
-                            duration-300
-                            group-hover:opacity-100
+                            absolute inset-0 bg-gradient-to-br
+                            from-yellow-400/[0.08] via-transparent
+                            to-transparent opacity-0 transition-opacity
+                            duration-300 group-hover:opacity-100
                           "
                         />
 
@@ -554,40 +512,23 @@ export default function Home() {
                         />
                       </div>
 
-                      {/* TEXT */}
-
+                      {/* MODULE TEXT */}
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h2
-                            className="
-                              truncate
-                              text-sm
-                              font-semibold
-                              tracking-tight
-                              text-zinc-900
-                              transition-colors
-                              duration-300
-                              group-hover:text-yellow-500
-                              dark:text-zinc-100
-                              dark:group-hover:text-yellow-400
-                              sm:text-[15px]
-                            "
-                          >
-                            {item.title}
-                          </h2>
-
-                          
-                        </div>
+                        <h2
+                          className="
+                            truncate text-sm font-semibold tracking-tight
+                            text-zinc-900 transition-colors duration-300
+                            group-hover:text-yellow-500 dark:text-zinc-100
+                            dark:group-hover:text-yellow-400 sm:text-[15px]
+                          "
+                        >
+                          {item.title}
+                        </h2>
 
                         <p
                           className="
-                            mt-1
-                            max-w-lg
-                            text-[10px]
-                            leading-relaxed
-                            text-zinc-500
-                            dark:text-zinc-500
-                            sm:text-[11px]
+                            mt-1 max-w-lg text-[10px] leading-relaxed
+                            text-zinc-500 dark:text-zinc-500 sm:text-[11px]
                           "
                         >
                           {item.description}
@@ -595,38 +536,24 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* ARROW BUTTON */}
-
+                    {/* ARROW */}
                     <div
                       className="
-                        flex
-                        h-8
-                        w-8
-                        shrink-0
-                        items-center
-                        justify-center
-                        rounded-full
-                        border
-                        border-zinc-200
-                        bg-white
-                        text-zinc-400
-                        transition-all
-                        duration-300
+                        flex h-8 w-8 shrink-0 items-center justify-center
+                        rounded-full border border-zinc-200 bg-white
+                        text-zinc-400 transition-all duration-300
                         group-hover:border-yellow-400/25
                         group-hover:bg-yellow-400/[0.08]
                         group-hover:text-yellow-500
-                        dark:border-white/[0.06]
-                        dark:bg-white/[0.02]
-                        dark:text-zinc-600
-                        dark:group-hover:text-yellow-400
+                        dark:border-white/[0.06] dark:bg-white/[0.02]
+                        dark:text-zinc-600 dark:group-hover:text-yellow-400
                       "
                     >
                       <ArrowUpRight
                         size={15}
                         strokeWidth={1.8}
                         className="
-                          transition-transform
-                          duration-300
+                          transition-transform duration-300
                           group-hover:-translate-y-0.5
                           group-hover:translate-x-0.5
                         "
@@ -635,23 +562,13 @@ export default function Home() {
                   </div>
 
                   {/* BOTTOM ACCENT */}
-
                   <div
                     className="
-                      pointer-events-none
-                      absolute
-                      bottom-0
-                      left-1/2
-                      h-px
-                      w-0
-                      -translate-x-1/2
-                      bg-gradient-to-r
-                      from-transparent
-                      via-yellow-400/70
-                      to-transparent
-                      transition-all
-                      duration-500
-                      group-hover:w-[55%]
+                      pointer-events-none absolute bottom-0 left-1/2
+                      h-px w-0 -translate-x-1/2
+                      bg-gradient-to-r from-transparent
+                      via-yellow-400/70 to-transparent
+                      transition-all duration-500 group-hover:w-[55%]
                     "
                   />
                 </Link>
@@ -660,69 +577,35 @@ export default function Home() {
           </div>
         </main>
 
-        {/* ===================================================
-            IMPORTANT / MARQUEE
-        =================================================== */}
-
-        <section
-          className="
-            relative
-            z-10
-            mt-7
-          "
-        >
+        {/* IMPORTANT / MARQUEE */}
+        <section className="relative z-10 mt-7">
           {/* SECTION TITLE */}
-
-          <div
-            className="
-              mb-3
-              flex
-              items-center
-              gap-3
-            "
-          >
+          <div className="mb-3 flex items-center gap-3">
             <div
               className="
-                h-px
-                flex-1
-                bg-gradient-to-r
-                from-transparent
-                to-zinc-200
-                dark:to-white/[0.06]
+                h-px flex-1 bg-gradient-to-r
+                from-transparent to-zinc-200 dark:to-white/[0.06]
               "
             />
 
             <div
               className="
-                flex
-                items-center
-                gap-2
-                rounded-full
-                border
-                border-yellow-500/15
-                bg-yellow-400/[0.035]
-                px-3
-                py-1.5
+                flex items-center gap-2 rounded-full border
+                border-yellow-500/15 bg-yellow-400/[0.035]
+                px-3 py-1.5
               "
             >
               <span
                 className="
-                  h-1.5
-                  w-1.5
-                  rounded-full
-                  bg-yellow-400
+                  h-1.5 w-1.5 rounded-full bg-yellow-400
                   shadow-[0_0_8px_rgba(250,204,21,0.8)]
                 "
               />
 
               <h2
                 className="
-                  text-[9px]
-                  font-semibold
-                  uppercase
-                  tracking-[0.2em]
-                  text-yellow-500
-                  dark:text-yellow-400
+                  text-[9px] font-semibold uppercase tracking-[0.2em]
+                  text-yellow-500 dark:text-yellow-400
                 "
               >
                 Penting Mann !
@@ -731,45 +614,26 @@ export default function Home() {
 
             <div
               className="
-                h-px
-                flex-1
-                bg-gradient-to-l
-                from-transparent
-                to-zinc-200
-                dark:to-white/[0.06]
+                h-px flex-1 bg-gradient-to-l
+                from-transparent to-zinc-200 dark:to-white/[0.06]
               "
             />
           </div>
 
           {/* MARQUEE */}
-
           <div
             className="
-              relative
-              overflow-hidden
-              rounded-[1.1rem]
-              border
-              border-zinc-200/80
-              bg-white/60
-              px-3
-              py-3
-              shadow-sm
-              backdrop-blur-xl
-              dark:border-white/[0.05]
+              relative overflow-hidden rounded-[1.1rem]
+              border border-zinc-200/80 bg-white/60 px-3 py-3
+              shadow-sm backdrop-blur-xl dark:border-white/[0.05]
               dark:bg-white/[0.015]
             "
           >
             <div
               className="
-                pointer-events-none
-                absolute
-                inset-x-10
-                top-0
-                h-px
-                bg-gradient-to-r
-                from-transparent
-                via-yellow-400/25
-                to-transparent
+                pointer-events-none absolute inset-x-10 top-0 h-px
+                bg-gradient-to-r from-transparent
+                via-yellow-400/25 to-transparent
               "
             />
 
@@ -778,42 +642,24 @@ export default function Home() {
         </section>
       </div>
 
-      {/* =====================================================
-          FOOTER DECORATION
-      ===================================================== */}
-
+      {/* FOOTER DECORATION */}
       <div
         className="
-          relative
-          z-10
-          mx-auto
-          mt-8
-          flex
-          max-w-2xl
-          items-center
-          justify-center
-          gap-3
+          relative z-10 mx-auto mt-8 flex max-w-2xl
+          items-center justify-center gap-3
         "
       >
         <div
           className="
-            h-px
-            w-12
-            bg-gradient-to-r
-            from-transparent
-            to-zinc-300
-            dark:to-white/[0.08]
+            h-px w-12 bg-gradient-to-r
+            from-transparent to-zinc-300 dark:to-white/[0.08]
           "
         />
 
         <span
           className="
-            text-[8px]
-            font-medium
-            uppercase
-            tracking-[0.35em]
-            text-zinc-400/70
-            dark:text-zinc-600
+            text-[8px] font-medium uppercase tracking-[0.35em]
+            text-zinc-400/70 dark:text-zinc-600
           "
         >
           MI • INTELLIGENCE
@@ -821,16 +667,11 @@ export default function Home() {
 
         <div
           className="
-            h-px
-            w-12
-            bg-gradient-to-l
-            from-transparent
-            to-zinc-300
-            dark:to-white/[0.08]
+            h-px w-12 bg-gradient-to-l
+            from-transparent to-zinc-300 dark:to-white/[0.08]
           "
         />
       </div>
     </div>
   );
 }
-
