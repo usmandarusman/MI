@@ -15,6 +15,7 @@ import {
   filterFishingBottomCandidates,
   MARKET_VOLUME_SCALE,
   MIN_MARKET_VOLUME,
+   MIN_ACCUMULATION_RATE,
   type StockHistoryData,
   type TradingSetup,
 } from "@/lib/strategies/fishing-bottom";
@@ -1085,8 +1086,10 @@ async function processRetracement(
     to,
   });
 
-  // Jangan gunakan filterFishingBottomCandidates di strategi Retracement.
-  const candidates = result.data;
+  // Filter akumulasi broker minimal 20% dari Axentraz.
+const candidates = result.data.filter(
+  (row) => row.accumulation_rate >= MIN_ACCUMULATION_RATE,
+);
   const missingSymbols = candidates
     .map((row) => row.symbol.trim().toUpperCase())
     .filter((symbol) => symbol && !historyCache.has(symbol));
