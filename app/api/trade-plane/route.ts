@@ -1,15 +1,11 @@
+
 import { NextRequest, NextResponse } from "next/server";
 import { getAuth } from "firebase-admin/auth";
 import { db } from "@/lib/firebase-admin";
 
 type DestinationType = "telegram";
-
-type AccumulationPeriod =
-  | "1w"
-  | "mtd"
-  | "1m"
-  | "2m"
-  | "3m";
+type AccumulationPeriod = "1w" | "mtd" | "1m" | "2m" | "3m";
+type TradingSetup = "fishing-bottom" | "retracement";
 
 type TradePlaneConfig = {
   enabled: boolean;
@@ -19,555 +15,256 @@ type TradePlaneConfig = {
   destination_type: DestinationType;
   destination_target: string;
   accumulation_period: AccumulationPeriod;
-  updatedAt: Date;
+  setup: TradingSetup;
+  updatedAt?: Date;
 };
 
-/* =========================================================
-   DEFAULT
-========================================================= */
+const DEFAULT_ACCUMULATION_PERIOD: AccumulationPeriod = "mtd";
+const DEFAULT_SETUP: TradingSetup = "fishing-bottom";
+const COLLECTION = "trade-plane";
 
-const DEFAULT_ACCUMULATION_PERIOD: AccumulationPeriod =
-  "mtd";
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-function getToken(request: NextRequest) {
-  const authorization =
-    request.headers.get("authorization");
-
-  if (!authorization) {
-    return null;
-  }
-
-  if (!authorization.startsWith("Bearer ")) {
-    return null;
-  }
-
-  const token = authorization
-    .slice(7)
-    .trim();
-
-  return token || null;
+function jsonError(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status });
 }
 
-async function authenticate(
-  request: NextRequest
-) {
+function normalizeAccumulationPeriod(
+  value: unknown,
+): AccumulationPeriod {
+  switch (value) {
+    case "1w":
+    case "mtd":
+    case "1m":
+    case "2m":
+    case "3m":
+      return value;
+    default:
+      return DEFAULT_ACCUMULATION_PERIOD;
+  }
+}
+
+function normalizeSetup(value: unknown): TradingSetup {
+  switch (value) {
+    case "retracement":
+      return "retracement";
+    case "fishing-bottom":
+    default:
+      return DEFAULT_SETUP;
+  }
+}
+
+function normalizeString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeConfig(
+  data?: Record<string, unknown>,
+): Omit<TradePlaneConfig, "updatedAt"> {
+  return {
+    enabled: data?.enabled === true,
+
+    broker_code: normalizeString(data?.broker_code).toUpperCase(),
+
+    broker_id:
+      typeof data?.broker_id === "number" &&
+      Number.isInteger(data.broker_id)
+        ? data.broker_id
+        : null,
+
+    broker_name: normalizeString(data?.broker_name),
+
+    destination_type: "telegram",
+
+    destination_target: normalizeString(data?.destination_target),
+
+    accumulation_period: normalizeAccumulationPeriod(
+      data?.accumulation_period,
+    ),
+
+    setup: normalizeSetup(data?.setup),
+  };
+}
+
+function getToken(request: NextRequest): string | null {
+  const authorization = request.headers.get("authorization");
+
+  if (!authorization?.startsWith("Bearer ")) {
+    return null;
+  }
+
+  return authorization.slice(7).trim() || null;
+}
+
+async function authenticate(request: NextRequest) {
   const token = getToken(request);
 
   if (!token) {
     throw new Error("UNAUTHORIZED");
   }
 
-  const decoded =
-    await getAuth().verifyIdToken(token);
-
-  return decoded;
+  return getAuth().verifyIdToken(token);
 }
 
-function normalizeAccumulationPeriod(
-  value: unknown
-): AccumulationPeriod {
-  if (
-    value === "1w" ||
-    value === "mtd" ||
-    value === "1m" ||
-    value === "2m" ||
-    value === "3m"
-  ) {
-    return value;
+function handleError(error: unknown, method: string) {
+  console.error(`${method} /api/trade-plane error:`, error);
+
+  if (error instanceof Error && error.message === "UNAUTHORIZED") {
+    return jsonError("Unauthorized. Silakan login kembali.", 401);
   }
 
-  return DEFAULT_ACCUMULATION_PERIOD;
+  return jsonError("Terjadi kesalahan pada konfigurasi Signal.", 500);
 }
 
 /* =========================================================
-   GET
+   GET: MEMBACA KONFIGURASI USER
 ========================================================= */
 
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
-    const user =
-      await authenticate(request);
+    const user = await authenticate(request);
 
-    const uid = user.uid;
+    const snapshot = await db
+      .collection(COLLECTION)
+      .doc(user.uid)
+      .get();
 
-    const snapshot =
-      await db
-        .collection("trade-plane")
-        .doc(uid)
-        .get();
-
-    /*
-     * Belum ada konfigurasi.
-     *
-     * Return default.
-     */
     if (!snapshot.exists) {
       return NextResponse.json({
         exists: false,
-
-        config: {
-          enabled: false,
-          broker_code: "",
-          broker_id: null,
-          broker_name: "",
-          destination_type: "telegram",
-          destination_target: "",
-          accumulation_period:
-            DEFAULT_ACCUMULATION_PERIOD,
-        },
+        config: normalizeConfig(),
       });
     }
 
-    const data =
-      snapshot.data();
-
     return NextResponse.json({
       exists: true,
-
-      config: {
-        enabled:
-          data?.enabled === true,
-
-        broker_code:
-          typeof data?.broker_code ===
-          "string"
-            ? data.broker_code
-            : "",
-
-        broker_id:
-          typeof data?.broker_id ===
-          "number"
-            ? data.broker_id
-            : null,
-
-        broker_name:
-          typeof data?.broker_name ===
-          "string"
-            ? data.broker_name
-            : "",
-
-        /*
-         * UI sekarang hanya Telegram.
-         */
-        destination_type: "telegram",
-
-        destination_target:
-          typeof data?.destination_target ===
-          "string"
-            ? data.destination_target
-            : "",
-
-        /*
-         * Config lama yang belum punya
-         * accumulation_period otomatis
-         * dianggap MTD.
-         */
-        accumulation_period:
-          normalizeAccumulationPeriod(
-            data?.accumulation_period
-          ),
-      },
+      config: normalizeConfig(
+        snapshot.data() as Record<string, unknown>,
+      ),
     });
   } catch (error) {
-    console.error(
-      "GET /api/trade-plane error:",
-      error
-    );
-
-    if (
-      error instanceof Error &&
-      error.message ===
-        "UNAUTHORIZED"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Unauthorized",
-        },
-        {
-          status: 401,
-        }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error:
-          "Gagal mengambil konfigurasi Trade Plane.",
-      },
-      {
-        status: 500,
-      }
-    );
+    return handleError(error, "GET");
   }
 }
 
 /* =========================================================
-   PUT
+   PUT: MENYIMPAN / MEMATIKAN SIGNAL
 ========================================================= */
 
-export async function PUT(
-  request: NextRequest
-) {
+export async function PUT(request: NextRequest) {
   try {
-    const user =
-      await authenticate(request);
+    const user = await authenticate(request);
+    const documentRef = db.collection(COLLECTION).doc(user.uid);
 
-    const uid = user.uid;
+    let body: unknown;
 
-    const body =
-      await request.json();
-
-    if (
-      !body ||
-      typeof body !== "object"
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Payload tidak valid.",
-        },
-        {
-          status: 400,
-        }
-      );
+    try {
+      body = await request.json();
+    } catch {
+      return jsonError("Format JSON tidak valid.", 400);
     }
 
-    const enabled =
-      body.enabled === true;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonError("Payload tidak valid.", 400);
+    }
 
-    /*
-     * Ambil accumulation_period.
-     *
-     * Kalau tidak dikirim:
-     * - untuk config lama tetap MTD
-     * - tidak membuat nilai invalid
-     */
-    const accumulationPeriod =
-      normalizeAccumulationPeriod(
-        body.accumulation_period
-      );
+    const input = body as Record<string, unknown>;
+    const snapshot = await documentRef.get();
+    const existing = snapshot.exists
+      ? (snapshot.data() as Record<string, unknown>)
+      : {};
 
-    /* =====================================================
-       OFF
-
-       Hanya ubah enabled.
-       Konfigurasi terakhir tetap disimpan.
-    ===================================================== */
-
-    if (!enabled) {
-      const snapshot =
-        await db
-          .collection("trade-plane")
-          .doc(uid)
-          .get();
-
-      /*
-       * Belum ada dokumen sama sekali.
-       */
+    /* OFF: pertahankan seluruh konfigurasi terakhir. */
+    if (input.enabled === false) {
       if (!snapshot.exists) {
-        const config: TradePlaneConfig = {
-          enabled: false,
+        const config = normalizeConfig();
 
-          broker_code: "",
-
-          broker_id: null,
-
-          broker_name: "",
-
-          destination_type:
-            "telegram",
-
-          destination_target: "",
-
-          accumulation_period:
-            accumulationPeriod,
-
+        await documentRef.set({
+          ...config,
           updatedAt: new Date(),
-        };
-
-        await db
-          .collection("trade-plane")
-          .doc(uid)
-          .set(config);
+        });
 
         return NextResponse.json({
           success: true,
-
-          config: {
-            enabled: false,
-
-            broker_code: "",
-
-            broker_id: null,
-
-            broker_name: "",
-
-            destination_type:
-              "telegram",
-
-            destination_target: "",
-
-            accumulation_period:
-              accumulationPeriod,
-          },
+          config,
         });
       }
 
-      const existing =
-        snapshot.data();
+      const config = {
+        ...normalizeConfig(existing),
+        enabled: false,
+      };
 
-      /*
-       * OFF hanya mengubah enabled.
-       *
-       * Broker, destination, dan
-       * accumulation_period tetap.
-       *
-       * Kalau config lama belum punya
-       * accumulation_period, kita isi MTD.
-       */
-      const existingAccumulationPeriod =
-        normalizeAccumulationPeriod(
-          existing?.accumulation_period
-        );
-
-      await db
-        .collection("trade-plane")
-        .doc(uid)
-        .set(
-          {
-            enabled: false,
-
-            accumulation_period:
-              existingAccumulationPeriod,
-
-            updatedAt:
-              new Date(),
-          },
-          {
-            merge: true,
-          }
-        );
+      await documentRef.set(
+        {
+          enabled: false,
+          accumulation_period: config.accumulation_period,
+          setup: config.setup,
+          updatedAt: new Date(),
+        },
+        { merge: true },
+      );
 
       return NextResponse.json({
         success: true,
-
-        config: {
-          enabled: false,
-
-          broker_code:
-            typeof existing?.broker_code ===
-            "string"
-              ? existing.broker_code
-              : "",
-
-          broker_id:
-            typeof existing?.broker_id ===
-            "number"
-              ? existing.broker_id
-              : null,
-
-          broker_name:
-            typeof existing?.broker_name ===
-            "string"
-              ? existing.broker_name
-              : "",
-
-          destination_type:
-            "telegram",
-
-          destination_target:
-            typeof existing?.destination_target ===
-            "string"
-              ? existing.destination_target
-              : "",
-
-          accumulation_period:
-            existingAccumulationPeriod,
-        },
+        config,
       });
     }
 
-    /* =====================================================
-       ON
-    ===================================================== */
-
-    const brokerCode =
-      typeof body.broker_code ===
-      "string"
-        ? body.broker_code
-            .trim()
-            .toUpperCase()
-        : "";
-
-    const brokerId =
-      typeof body.broker_id ===
-        "number" &&
-      Number.isInteger(
-        body.broker_id
-      ) &&
-      body.broker_id > 0
-        ? body.broker_id
-        : null;
-
-    const brokerName =
-      typeof body.broker_name ===
-      "string"
-        ? body.broker_name.trim()
-        : "";
-
-    const destinationTarget =
-      typeof body.destination_target ===
-      "string"
-        ? body.destination_target.trim()
-        : "";
-
-    if (
-      !/^[A-Z]{2}$/.test(
-        brokerCode
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Kode broker tidak valid.",
-        },
-        {
-          status: 400,
-        }
-      );
+    /* ON: validasi seluruh konfigurasi yang diperlukan. */
+    if (input.enabled !== true) {
+      return jsonError("Status Signal tidak valid.", 400);
     }
 
-    if (!brokerId) {
-      return NextResponse.json(
-        {
-          error:
-            "Broker ID tidak valid.",
-        },
-        {
-          status: 400,
-        }
-      );
+    const brokerCode = normalizeString(input.broker_code).toUpperCase();
+    const brokerId =
+      typeof input.broker_id === "number" &&
+      Number.isInteger(input.broker_id) &&
+      input.broker_id > 0
+        ? input.broker_id
+        : null;
+    const brokerName = normalizeString(input.broker_name);
+    const destinationTarget = normalizeString(input.destination_target);
+    const accumulationPeriod = normalizeAccumulationPeriod(
+      input.accumulation_period,
+    );
+    const setup = normalizeSetup(input.setup);
+
+    if (!/^[A-Z0-9]{2,5}$/.test(brokerCode)) {
+      return jsonError("Kode broker tidak valid.", 400);
+    }
+
+    if (brokerId === null) {
+      return jsonError("Broker ID tidak valid.", 400);
     }
 
     if (!brokerName) {
-      return NextResponse.json(
-        {
-          error:
-            "Nama broker wajib diisi.",
-        },
-        {
-          status: 400,
-        }
-      );
+      return jsonError("Nama broker wajib diisi.", 400);
     }
 
     if (!destinationTarget) {
-      return NextResponse.json(
-        {
-          error:
-            "Target tujuan wajib diisi.",
-        },
-        {
-          status: 400,
-        }
-      );
+      return jsonError("Telegram Chat ID wajib diisi.", 400);
     }
 
-    const config: TradePlaneConfig = {
+    const config: Omit<TradePlaneConfig, "updatedAt"> = {
       enabled: true,
-
-      broker_code:
-        brokerCode,
-
-      broker_id:
-        brokerId,
-
-      broker_name:
-        brokerName,
-
-      destination_type:
-        "telegram",
-
-      destination_target:
-        destinationTarget,
-
-      accumulation_period:
-        accumulationPeriod,
-
-      updatedAt:
-        new Date(),
+      broker_code: brokerCode,
+      broker_id: brokerId,
+      broker_name: brokerName,
+      destination_type: "telegram",
+      destination_target: destinationTarget,
+      accumulation_period: accumulationPeriod,
+      setup,
     };
 
-    await db
-      .collection("trade-plane")
-      .doc(uid)
-      .set(
-        config,
-        {
-          merge: true,
-        }
-      );
+    await documentRef.set({
+      ...config,
+      updatedAt: new Date(),
+    });
 
     return NextResponse.json({
       success: true,
-
-      config: {
-        enabled: true,
-
-        broker_code:
-          brokerCode,
-
-        broker_id:
-          brokerId,
-
-        broker_name:
-          brokerName,
-
-        destination_type:
-          "telegram",
-
-        destination_target:
-          destinationTarget,
-
-        accumulation_period:
-          accumulationPeriod,
-      },
+      config,
     });
   } catch (error) {
-    console.error(
-      "PUT /api/trade-plane error:",
-      error
-    );
-
-    if (
-      error instanceof Error &&
-      error.message ===
-        "UNAUTHORIZED"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Unauthorized",
-        },
-        {
-          status: 401,
-        }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error:
-          "Gagal menyimpan konfigurasi Trade Plane.",
-      },
-      {
-        status: 500,
-      }
-    );
+    return handleError(error, "PUT");
   }
 }

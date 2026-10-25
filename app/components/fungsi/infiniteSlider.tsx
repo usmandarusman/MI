@@ -18,7 +18,7 @@ const trade = [
     id: 2,
     trade: "Swing Trade",
     subtitle: "Medium-term strategy",
-    Strategi: `Gunakan kemampuan analisa kamu terhadap saham berdasarkan "Broker Summary", pilih saham yang didalamnya ada akumulasi dari suatu broker dan gunakan timeframe 1D.`,
+    Strategi: `Gunakan kemampuan analisa kamu terhadap saham berdasarkan "Broker Summary", pilih saham yang didalamnya ada akumulasi dari suatu broker dan gunakan timeframe 1D atau bisa juga kamu membeli saham berdasarkan adanya event tertentu dan selalu beli berdasarkan teknikal.`,
   },
   {
     id: 3,

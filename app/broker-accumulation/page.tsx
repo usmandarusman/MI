@@ -680,94 +680,139 @@ export default function BrokerAccumulation() {
 
   /*
    * ============================================================
-   * LOAD BROKERS DARI LOCAL STORAGE
+   * LOAD BROKERS: LOCAL STORAGE -> API / FIRESTORE
    * ============================================================
-   *
-   * TIDAK ADA FETCH /api/brokers DI SINI.
-   *
-   * Data broker sudah diambil oleh Home.
+   * Gunakan cache lokal jika valid. Jika belum ada, kosong,
+   * atau rusak, ambil data dari /api/brokers lalu simpan cache.
    */
 
   useEffect(() => {
     let cancelled = false;
 
-    const loadBrokersFromCache =
-      () => {
-        try {
-          setIsBrokersLoading(true);
-          setBrokersError("");
+    const loadBrokers = async () => {
+      setIsBrokersLoading(true);
+      setBrokersError("");
 
-          const cached =
-            localStorage.getItem(
-              BROKERS_CACHE_KEY
-            );
+      // 1. Cek cache lokal terlebih dahulu.
+      try {
+        const cached = localStorage.getItem(BROKERS_CACHE_KEY);
 
-          if (!cached) {
+        if (cached) {
+          const normalized = normalizeBrokers(
+            JSON.parse(cached) as unknown
+          );
+
+          if (normalized.length > 0) {
             if (!cancelled) {
-              setBrokers([]);
-              setBrokersError(
-                "Data broker belum tersedia. Silakan kembali ke Home."
-              );
+              setBrokers(normalized);
+              setBrokersError("");
+              setIsBrokersLoading(false);
             }
 
-            return;
-          }
-
-          const parsed: unknown =
-            JSON.parse(cached);
-
-          const normalized =
-            normalizeBrokers(
-              parsed
+            console.info(
+              `[BrokerAccumulation] ${normalized.length} broker dimuat dari cache lokal`
             );
-
-          if (
-            normalized.length === 0
-          ) {
-            if (!cancelled) {
-              setBrokers([]);
-              setBrokersError(
-                "Data broker di cache kosong."
-              );
-            }
-
             return;
-          }
-
-          if (cancelled) return;
-
-          setBrokers(
-            normalized
-          );
-
-          setBrokersError("");
-
-          console.log(
-            `[BrokerAccumulation] ${normalized.length} broker dimuat dari localStorage`
-          );
-        } catch (error) {
-          if (cancelled) return;
-
-          console.error(
-            "Gagal membaca cache broker:",
-            error
-          );
-
-          setBrokers([]);
-
-          setBrokersError(
-            "Gagal membaca data broker dari localStorage."
-          );
-        } finally {
-          if (!cancelled) {
-            setIsBrokersLoading(
-              false
-            );
           }
         }
-      };
+      } catch (error) {
+        console.warn(
+          "[BrokerAccumulation] Cache broker tidak valid; mengambil data dari API:",
+          error
+        );
+      }
 
-    loadBrokersFromCache();
+      // 2. Cache tidak ada/tidak valid: ambil dari API Firestore.
+      try {
+        const response = await fetch("/api/brokers", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        const result: unknown = await response.json();
+
+        if (!response.ok) {
+          const message =
+            result &&
+            typeof result === "object" &&
+            "message" in result &&
+            typeof result.message === "string"
+              ? result.message
+              : `Gagal mengambil data broker (${response.status})`;
+
+          throw new Error(message);
+        }
+
+        if (
+          !result ||
+          typeof result !== "object" ||
+          !("success" in result) ||
+          result.success !== true
+        ) {
+          const message =
+            result &&
+            typeof result === "object" &&
+            "message" in result &&
+            typeof result.message === "string"
+              ? result.message
+              : "API tidak berhasil mengambil data broker.";
+
+          throw new Error(message);
+        }
+
+        // API berbentuk { success: true, data: [...] }.
+        const normalized = normalizeBrokers(result);
+
+        if (normalized.length === 0) {
+          throw new Error(
+            "Data broker dari database kosong atau format datanya tidak sesuai."
+          );
+        }
+
+        if (cancelled) return;
+
+        // 3. Tampilkan data yang didapat dari API.
+        setBrokers(normalized);
+        setBrokersError("");
+
+        // 4. Simpan data yang sudah dinormalisasi ke cache lokal.
+        try {
+          localStorage.setItem(
+            BROKERS_CACHE_KEY,
+            JSON.stringify(normalized)
+          );
+        } catch (storageError) {
+          console.warn(
+            "[BrokerAccumulation] Gagal menyimpan cache broker:",
+            storageError
+          );
+        }
+
+        console.info(
+          `[BrokerAccumulation] ${normalized.length} broker berhasil diambil dari API`
+        );
+      } catch (error) {
+        if (cancelled) return;
+
+        console.error(
+          "[BrokerAccumulation] Gagal memuat broker:",
+          error
+        );
+
+        setBrokers([]);
+        setBrokersError(
+          error instanceof Error
+            ? error.message
+            : "Terjadi kesalahan saat memuat data broker."
+        );
+      } finally {
+        if (!cancelled) {
+          setIsBrokersLoading(false);
+        }
+      }
+    };
+
+    void loadBrokers();
 
     return () => {
       cancelled = true;
