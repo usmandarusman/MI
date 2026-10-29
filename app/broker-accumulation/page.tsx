@@ -3,6 +3,8 @@
 
 "use client";
 
+import { createPortal } from "react-dom";
+
 import {
   useEffect,
   useMemo,
@@ -12,6 +14,7 @@ import {
 
 import {
   Activity,
+  AlertCircle,
   ArrowDown,
   ArrowUp,
   BarChart3,
@@ -467,11 +470,28 @@ export default function BrokerAccumulation() {
     setIsBrokerDropdownOpen,
   ] = useState(false);
 
-  const emitenWrapperRef =
-    useRef<HTMLDivElement>(null);
+ const emitenWrapperRef = useRef<HTMLDivElement>(null);
+const emitenDropdownRef = useRef<HTMLDivElement>(null);
+
+const [emitenDropdownPosition, setEmitenDropdownPosition] =
+  useState({
+    top: 0,
+    left: 0,
+    width: 0,
+    ready: false,
+  });
 
   const brokerWrapperRef =
     useRef<HTMLDivElement>(null);
+  const brokerDropdownRef = useRef<HTMLDivElement>(null);
+
+  const [brokerDropdownPosition, setBrokerDropdownPosition] =
+    useState({
+      top: 0,
+      left: 0,
+      width: 0,
+      ready: false,
+    });
 
   const [popupData, setPopupData] =
     useState<{
@@ -508,6 +528,7 @@ export default function BrokerAccumulation() {
    * LOAD LOCAL STORAGE DATA
    * ============================================================
    */
+  
 
   useEffect(() => {
     try {
@@ -577,6 +598,7 @@ export default function BrokerAccumulation() {
    * LOAD EMITEN
    * ============================================================
    */
+
 
   useEffect(() => {
     let cancelled = false;
@@ -824,48 +846,179 @@ export default function BrokerAccumulation() {
    * CLOSE DROPDOWNS ON OUTSIDE CLICK
    * ============================================================
    */
-
   useEffect(() => {
-    const handleClickOutside = (
-      event: MouseEvent
-    ) => {
-      const target =
-        event.target as Node;
+  if (!isEmitenDropdownOpen) {
+    setEmitenDropdownPosition((prev) => ({
+      ...prev,
+      ready: false,
+    }));
+    return;
+  }
 
-      if (
-        emitenWrapperRef.current &&
-        !emitenWrapperRef.current.contains(
-          target
-        )
-      ) {
-        setIsEmitenDropdownOpen(
-          false
-        );
-      }
+  const updatePosition = () => {
+    const input = emitenWrapperRef.current;
+    if (!input) return;
 
-      if (
-        brokerWrapperRef.current &&
-        !brokerWrapperRef.current.contains(
-          target
-        )
-      ) {
-        setIsBrokerDropdownOpen(
-          false
-        );
-      }
-    };
+    const rect = input.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const margin = 12;
 
-    document.addEventListener(
-      "mousedown",
-      handleClickOutside
+    const width = Math.min(
+      Math.max(rect.width, 260),
+      viewportWidth - margin * 2,
+      360
     );
 
-    return () =>
-      document.removeEventListener(
-        "mousedown",
-        handleClickOutside
-      );
-  }, []);
+    const left = Math.max(
+      margin,
+      Math.min(
+        rect.left,
+        viewportWidth - width - margin
+      )
+    );
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const maxHeight = Math.min(
+      320,
+      Math.max(160, window.innerHeight - 32)
+    );
+
+    const openAbove =
+      spaceBelow < Math.min(300, maxHeight) &&
+      spaceAbove > spaceBelow;
+
+    const top = openAbove
+      ? Math.max(
+          8,
+          rect.top - Math.min(maxHeight, spaceAbove - 8) - 8
+        )
+      : rect.bottom + 8;
+
+    setEmitenDropdownPosition({
+      top,
+      left,
+      width,
+      ready: true,
+    });
+  };
+
+  updatePosition();
+
+  window.addEventListener("resize", updatePosition);
+  window.addEventListener("scroll", updatePosition, true);
+
+  return () => {
+    window.removeEventListener("resize", updatePosition);
+    window.removeEventListener("scroll", updatePosition, true);
+  };
+}, [isEmitenDropdownOpen, form.emiten, securities.length]);
+  useEffect(() => {
+  if (!isBrokerDropdownOpen) {
+    setBrokerDropdownPosition((prev) => ({
+      ...prev,
+      ready: false,
+    }));
+    return;
+  }
+
+  const updatePosition = () => {
+    const input = brokerWrapperRef.current;
+
+    if (!input) return;
+
+    const rect = input.getBoundingClientRect();
+
+    const viewportWidth = window.innerWidth;
+    const margin = 12;
+    const width = Math.min(
+      Math.max(rect.width, 280),
+      viewportWidth - margin * 2,
+      360
+    );
+
+    const left = Math.max(
+      margin,
+      Math.min(
+        rect.left,
+        viewportWidth - width - margin
+      )
+    );
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    const dropdownMaxHeight = Math.min(
+      320,
+      Math.max(160, window.innerHeight - 32)
+    );
+
+    const openAbove =
+      spaceBelow < Math.min(300, dropdownMaxHeight) &&
+      spaceAbove > spaceBelow;
+
+    const top = openAbove
+      ? Math.max(
+          8,
+          rect.top - Math.min(dropdownMaxHeight, spaceAbove - 8) - 8
+        )
+      : rect.bottom + 8;
+
+    setBrokerDropdownPosition({
+      top,
+      left,
+      width,
+      ready: true,
+    });
+  };
+
+  updatePosition();
+
+  window.addEventListener("resize", updatePosition);
+  window.addEventListener("scroll", updatePosition, true);
+
+  return () => {
+    window.removeEventListener("resize", updatePosition);
+    window.removeEventListener("scroll", updatePosition, true);
+  };
+}, [isBrokerDropdownOpen, form.broker, brokers.length]);
+
+useEffect(() => {
+  const handleClickOutside = (event: MouseEvent) => {
+    const target = event.target;
+
+    if (!(target instanceof Node)) return;
+
+    // EMITEN: cek input dan dropdown portal
+    const clickedEmitenInput =
+      emitenWrapperRef.current?.contains(target) ?? false;
+
+    const clickedEmitenDropdown =
+      emitenDropdownRef.current?.contains(target) ?? false;
+
+    if (!clickedEmitenInput && !clickedEmitenDropdown) {
+      setIsEmitenDropdownOpen(false);
+    }
+
+    // BROKER: cek input dan dropdown portal
+    const clickedBrokerInput =
+      brokerWrapperRef.current?.contains(target) ?? false;
+
+    const clickedBrokerDropdown =
+      brokerDropdownRef.current?.contains(target) ?? false;
+
+    if (!clickedBrokerInput && !clickedBrokerDropdown) {
+      setIsBrokerDropdownOpen(false);
+    }
+  };
+
+  document.addEventListener("mousedown", handleClickOutside);
+
+  return () => {
+    document.removeEventListener("mousedown", handleClickOutside);
+  };
+}, []);
+
 
   /*
    * ============================================================
@@ -1276,7 +1429,7 @@ export default function BrokerAccumulation() {
     };
 
   return (
-    <div className="relative min-h-full w-full overflow-x-hidden bg-[#f7f7f5] px-3 py-4 text-zinc-900 dark:bg-[#050505] dark:text-zinc-100 sm:px-5 sm:py-6">
+    <div className="relative min-h-full w-full overflow-x-clip bg-[#f7f7f5] px-3 py-4 text-zinc-900 dark:bg-[#050505] dark:text-zinc-100 sm:px-5 sm:py-6">
       {/* Ambient background */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute left-1/2 top-[-220px] h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-yellow-400/[0.035] blur-[140px] dark:bg-yellow-400/[0.05]" />
@@ -1371,66 +1524,141 @@ export default function BrokerAccumulation() {
             }}
           />
 
-          {isEmitenDropdownOpen && (
-            <div className="absolute left-0 top-full z-50 mt-1 max-h-64 w-64 max-w-[85vw] overflow-y-auto rounded-2xl border border-zinc-200 bg-white/95 p-1.5 shadow-[0_25px_60px_rgba(0,0,0,0.14)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#0d0d0d]/98 dark:shadow-[0_25px_70px_rgba(0,0,0,0.55)]">
+          {isEmitenDropdownOpen &&
+  typeof document !== "undefined" &&
+  createPortal(
+    <div
+      ref={emitenDropdownRef}
+      style={{
+        position: "fixed",
+        top: emitenDropdownPosition.top,
+        left: emitenDropdownPosition.left,
+        width: emitenDropdownPosition.width || 300,
+        maxHeight: "min(320px, calc(100dvh - 24px))",
+        visibility: emitenDropdownPosition.ready
+          ? "visible"
+          : "hidden",
+      }}
+      className="
+        z-[99999] flex flex-col overflow-hidden
+        rounded-2xl border border-zinc-200/90
+        bg-white/95 shadow-[0_24px_70px_rgba(0,0,0,0.16)]
+        ring-1 ring-black/[0.03] backdrop-blur-2xl
+        dark:border-white/[0.10]
+        dark:bg-[#0b0d12]/[0.98]
+        dark:shadow-[0_24px_80px_rgba(0,0,0,0.65)]
+      "
+    >
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200/70 px-3.5 py-3 dark:border-white/[0.07]">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-yellow-500/20 bg-yellow-400/[0.10] text-yellow-600 dark:text-yellow-400">
+            <Search size={16} />
+          </div>
 
-              {isSecuritiesLoading ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-zinc-500">
-                  <Loader2
-                    size={14}
-                    className="animate-spin"
-                  />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">
+              Emiten Directory
+            </p>
+            <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+              Pilih kode saham
+            </p>
+          </div>
+        </div>
 
-                  Memuat data emiten...
-                </div>
-              ) : securitiesError ? (
-                <div className="px-3 py-3 text-xs text-red-500">
-                  {securitiesError}
-                </div>
-              ) : filteredSecurities.length >
-                0 ? (
-                filteredSecurities.map(
-                  (security) => (
-                    <button
-                      key={
-                        security.code
-                      }
-                      type="button"
-                      onMouseDown={(
-                        e
-                      ) =>
-                        e.preventDefault()
-                      }
-                      onClick={() =>
-                        handleSelectEmiten(
-                          security
-                        )
-                      }
-                      className="flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition hover:bg-yellow-400/[0.07]"
-                    >
-                      <span className="text-sm font-semibold text-yellow-600 dark:text-yellow-400">
-                        {
-                          security.code
-                        }
-                      </span>
+        <span className="shrink-0 rounded-lg border border-yellow-500/20 bg-yellow-400/[0.08] px-2 py-1 text-[10px] font-bold text-yellow-700 dark:text-yellow-400">
+          {securities.length} EMITEN
+        </span>
+      </div>
 
-                      {security.name && (
-                        <span className="line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">
-                          {
-                            security.name
-                          }
-                        </span>
-                      )}
-                    </button>
-                  )
-                )
-              ) : (
-                <div className="px-3 py-4 text-center text-xs text-zinc-500">
-                  Emiten tidak ditemukan
-                </div>
-              )}
-            </div>
-          )}
+      {/* Content */}
+      {isSecuritiesLoading ? (
+        <div className="flex items-center justify-center gap-2.5 px-4 py-8">
+          <Loader2
+            size={17}
+            className="animate-spin text-yellow-500"
+          />
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Memuat data emiten...
+          </span>
+        </div>
+      ) : securitiesError ? (
+        <div className="flex flex-col items-center gap-2 px-4 py-7 text-center">
+          <AlertCircle size={20} className="text-red-500" />
+          <p className="text-xs font-medium text-red-500">
+            Gagal memuat emiten
+          </p>
+          <p className="break-words text-[11px] text-zinc-500 dark:text-zinc-400">
+            {securitiesError}
+          </p>
+        </div>
+      ) : filteredSecurities.length > 0 ? (
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 [scrollbar-color:#71717a_transparent] [scrollbar-width:thin]">
+          {filteredSecurities.map((security) => (
+            <button
+              key={security.code}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => handleSelectEmiten(security)}
+              className="
+                group flex w-full items-center justify-between gap-3
+                rounded-xl border border-transparent px-3 py-2.5
+                text-left transition-all duration-200
+                hover:border-yellow-500/15
+                hover:bg-yellow-400/[0.07]
+                active:scale-[0.99]
+                focus-visible:outline-none
+                focus-visible:ring-2 focus-visible:ring-yellow-500/40
+              "
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-yellow-600 transition-colors group-hover:text-yellow-700 dark:text-yellow-400 dark:group-hover:text-yellow-300">
+                  {security.code}
+                </p>
+
+                {security.name && (
+                  <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {security.name}
+                  </p>
+                )}
+              </div>
+
+              <ChevronDown
+                size={15}
+                className="-rotate-90 shrink-0 text-zinc-300 transition-all group-hover:translate-x-0.5 group-hover:text-yellow-500 dark:text-zinc-600"
+              />
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+          <Search
+            size={20}
+            className="mb-3 text-zinc-400 dark:text-zinc-500"
+          />
+          <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+            Emiten tidak ditemukan
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Coba kode saham yang berbeda.
+          </p>
+        </div>
+      )}
+
+      {/* Footer */}
+      {!isSecuritiesLoading &&
+        !securitiesError &&
+        filteredSecurities.length > 0 && (
+          <div className="shrink-0 border-t border-zinc-200/70 px-3.5 py-2 dark:border-white/[0.07]">
+            <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-500">
+              Menampilkan {filteredSecurities.length} dari{" "}
+              {securities.length} emiten
+            </p>
+          </div>
+        )}
+    </div>,
+    document.body
+  )}
         </div>
 
         {/* BROKER */}
@@ -1466,68 +1694,184 @@ export default function BrokerAccumulation() {
             }}
           />
 
-          {isBrokerDropdownOpen && (
-            <div className="absolute top-full z-50 mt-1 max-h-64 w-72 max-w-[85vw] overflow-y-auto rounded-2xl border border-zinc-200 bg-white/95 p-1.5 shadow-[0_25px_60px_rgba(0,0,0,0.14)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#0d0d0d]/98 dark:shadow-[0_25px_70px_rgba(0,0,0,0.55)]">
+         {isBrokerDropdownOpen &&
+  typeof document !== "undefined" &&
+  createPortal(
+    <div
+      ref={brokerDropdownRef}
+      style={{
+        position: "fixed",
+        top: brokerDropdownPosition.top,
+        left: brokerDropdownPosition.left,
+        width: brokerDropdownPosition.width || 300,
+        maxHeight: "min(320px, calc(100dvh - 24px))",
+        visibility: brokerDropdownPosition.ready
+          ? "visible"
+          : "hidden",
+      }}
+      className="
+        z-[99999] flex flex-col
+        overflow-hidden rounded-2xl
+        border border-zinc-200/90
+        bg-white/95
+        shadow-[0_24px_70px_rgba(0,0,0,0.16)]
+        ring-1 ring-black/[0.03]
+        backdrop-blur-2xl
+        dark:border-white/[0.10]
+        dark:bg-[#0b0d12]/[0.98]
+        dark:shadow-[0_24px_80px_rgba(0,0,0,0.65)]
+        dark:ring-white/[0.025]
+      "
+    >
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200/70 px-3.5 py-3 dark:border-white/[0.07]">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-yellow-500/20 bg-yellow-400/[0.10] text-yellow-600 dark:text-yellow-400">
+            <Search size={16} />
+          </div>
 
-              {isBrokersLoading ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-zinc-500">
-                  <Loader2
-                    size={14}
-                    className="animate-spin"
-                  />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold tracking-wide text-zinc-800 dark:text-zinc-100">
+              Broker Directory
+            </p>
 
-                  Memuat data broker...
-                </div>
-              ) : brokersError ? (
-                <div className="px-3 py-3 text-xs text-red-500">
-                  {brokersError}
-                </div>
-              ) : filteredBrokers.length >
-                0 ? (
-                filteredBrokers.map(
-                  (broker) => (
-                    <button
-                      key={
-                        broker.broker_code
-                      }
-                      type="button"
-                      onMouseDown={(
-                        e
-                      ) =>
-                        e.preventDefault()
-                      }
-                      onClick={() =>
-                        handleSelectBroker(
-                          broker
-                        )
-                      }
-                      className="flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition hover:bg-yellow-400/[0.07]"
-                    >
-                      <span
-                        className={`text-sm font-semibold ${getBrokerColor(
-                          broker
-                        )}`}
-                      >
-                        {
-                          broker.broker_code
-                        }
-                      </span>
+            <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+              Pilih broker yang ingin digunakan
+            </p>
+          </div>
+        </div>
 
-                      <span className="line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">
-                        {
-                          broker.broker_name
-                        }
-                      </span>
-                    </button>
-                  )
-                )
-              ) : (
-                <div className="px-3 py-4 text-center text-xs text-zinc-500">
-                  Broker tidak ditemukan
+        <span className="shrink-0 rounded-lg border border-yellow-500/20 bg-yellow-400/[0.08] px-2 py-1 text-[10px] font-bold tracking-wide text-yellow-700 dark:text-yellow-400">
+          {brokers.length} BROKER
+        </span>
+      </div>
+
+      {/* Loading */}
+      {isBrokersLoading ? (
+        <div className="flex items-center justify-center gap-2.5 px-4 py-8">
+          <Loader2
+            size={17}
+            className="animate-spin text-yellow-500"
+          />
+
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Memuat data broker...
+          </span>
+        </div>
+      ) : brokersError ? (
+        /* Error */
+        <div className="flex flex-col items-center gap-2 px-4 py-7 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-500/20 bg-red-500/[0.07] text-red-500">
+            <AlertCircle size={18} />
+          </div>
+
+          <p className="text-xs font-medium text-red-500">
+            Gagal memuat broker
+          </p>
+
+          <p className="break-words text-[11px] text-zinc-500 dark:text-zinc-400">
+            {brokersError}
+          </p>
+        </div>
+      ) : filteredBrokers.length > 0 ? (
+        /* Broker list */
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 [scrollbar-color:#71717a_transparent] [scrollbar-width:thin]">
+          {filteredBrokers.map((broker) => (
+            <button
+              key={broker.broker_code}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => handleSelectBroker(broker)}
+              className="
+                group flex w-full items-center
+                justify-between gap-3
+                rounded-xl border border-transparent
+                px-3 py-2.5 text-left
+                transition-all duration-200
+                hover:border-yellow-500/15
+                hover:bg-yellow-400/[0.07]
+                active:scale-[0.99]
+                focus-visible:outline-none
+                focus-visible:ring-2
+                focus-visible:ring-yellow-500/40
+              "
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div
+                  className={`
+                    flex h-10 w-11 shrink-0
+                    items-center justify-center
+                    rounded-xl border
+                    border-zinc-200 bg-zinc-50
+                    text-xs font-bold tracking-wide
+                    transition-colors
+                    group-hover:border-yellow-500/30
+                    group-hover:bg-yellow-400/[0.08]
+                    dark:border-white/[0.08]
+                    dark:bg-white/[0.035]
+                    ${getBrokerColor(broker)}
+                  `}
+                >
+                  {broker.broker_code}
                 </div>
-              )}
-            </div>
-          )}
+
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-zinc-800 transition-colors group-hover:text-yellow-700 dark:text-zinc-200 dark:group-hover:text-yellow-400">
+                    {broker.broker_name}
+                  </p>
+
+                  <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {broker.is_foreign === true
+                      ? "Foreign Broker"
+                      : "Broker Anggota Bursa"}
+                  </p>
+                </div>
+              </div>
+
+              <ChevronDown
+                size={15}
+                className="
+                  -rotate-90 shrink-0
+                  text-zinc-300
+                  transition-all duration-200
+                  group-hover:translate-x-0.5
+                  group-hover:text-yellow-500
+                  dark:text-zinc-600
+                "
+              />
+            </button>
+          ))}
+        </div>
+      ) : (
+        /* Empty search result */
+        <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-zinc-500">
+            <Search size={18} />
+          </div>
+
+          <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+            Broker tidak ditemukan
+          </p>
+
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Coba periksa kembali kode atau nama broker.
+          </p>
+        </div>
+      )}
+
+      {/* Footer */}
+      {!isBrokersLoading &&
+        !brokersError &&
+        filteredBrokers.length > 0 && (
+          <div className="shrink-0 border-t border-zinc-200/70 px-3.5 py-2 dark:border-white/[0.07]">
+            <p className="text-center text-[10px] text-zinc-400 dark:text-zinc-500">
+              Menampilkan {filteredBrokers.length} dari {brokers.length} broker
+            </p>
+          </div>
+        )}
+    </div>,
+    document.body
+  )}
         </div>
 
         {/* NET BUY */}
